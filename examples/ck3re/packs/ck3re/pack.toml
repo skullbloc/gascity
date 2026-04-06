@@ -1,0 +1,33 @@
+# CK3 Reverse Engineering — PairCoder methodology pack.
+#
+# Provides the prospector agent: a rig-scoped pool agent that runs
+# PairCoder investigation loops against the CK3 binary. Composes with
+# gastown (polecats implement code changes) and llm-wiki (archivist
+# maintains the knowledge base).
+#
+# Referenced by rigs[].pack:
+#   rigs[].pack → expands rig agents only (prospector)
+
+[pack]
+name = "ck3re"
+schema = 1
+
+[formulas]
+dir = "formulas"
+
+# ── PROSPECTOR — RE investigator. Rig-scoped pool. ──────────────────
+[[agent]]
+name = "prospector"
+scope = "rig"
+wake_mode = "fresh"
+work_dir = ".gc/agents/{{.Rig}}/prospectors/{{.AgentBase}}"
+prompt_template = "prompts/prospector.md.tmpl"
+nudge = "Run gc hook; check for RE investigation work."
+idle_timeout = "2h"
+min_active_sessions = 0
+max_active_sessions = 2
+
+[agent.env]
+WIKI_DIR = "wiki"
+GHIDRA_PROJECT = ".ghidra/ck3"
+RE_TOOLS_DIR = "scripts/re"

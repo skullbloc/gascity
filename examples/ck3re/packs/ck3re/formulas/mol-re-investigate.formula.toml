@@ -1,0 +1,375 @@
+description = """
+PairCoder reverse engineering investigation loop.
+
+Uses the PairCoder methodology (ASE 2024) for systematic binary analysis:
+multi-plan exploration, history-aware loop detection, and plan switching.
+
+The prospector reads the wiki for prior knowledge, generates multiple diverse
+RE plans, executes the most promising, and switches plans when stuck in a loop.
+On success, findings are filed to the archivist (wiki ingest) and polecats
+(implementation beads).
+
+## PairCoder Loop
+
+1. Read wiki for prior knowledge
+2. Generate 3+ diverse RE plans (static, runtime, differential, pattern)
+3. Execute the active plan
+4. Evaluate outcome:
+   - SUCCESS → update wiki, file beads
+   - PARTIAL → refine current plan (max {{max_refinements}} times)
+   - BLOCKED/FAILED → check attempt history for loop detection
+     - Same error seen before → switch to next plan
+     - New error → refine with error context
+     - All plans exhausted → escalate to mayor
+5. Loop via pour-work-burn (next-iteration step)
+
+## Metadata Contract
+
+Plans and attempt history are persisted in bead metadata so investigation
+state survives session restarts and context exhaustion.
+
+## Composition
+
+This formula is designed for the prospector agent in the ck3re pack.
+It composes with:
+- gastown pack (polecats implement code changes from findings)
+- llm-wiki pack (archivist maintains the knowledge base from findings)
+"""
+formula = "mol-re-investigate"
+version = 1
+
+[vars]
+[vars.issue]
+description = "Bead ID of the investigation target"
+required = true
+
+[vars.max_plans]
+description = "Maximum number of RE plans to generate and try"
+default = "3"
+
+[vars.max_refinements]
+description = "Maximum refinements per plan before switching"
+default = "3"
+
+[[steps]]
+id = "read-wiki"
+title = "Load prior knowledge about the investigation target"
+description = """
+Before investigating, read the wiki for existing knowledge about the target.
+
+**1. Read the wiki index:**
+```bash
+cat $WIKI_DIR/index.md
+```
+
+**2. Search for related pages:**
+```bash
+grep -rl "<investigation target keywords>" $WIKI_DIR/
+```
+
+**3. Read all relevant pages and note:**
+- **Already known**: offsets, struct layouts, function signatures already documented
+- **Contradictory**: findings that conflict with each other or with the current binary version
+- **Missing**: gaps in knowledge that this investigation should fill
+- **Version notes**: which binary version each finding applies to
+
+**4. Record wiki context in bead notes:**
+```bash
+bd update {{issue}} --notes "Wiki context:
+Known: <summary of existing knowledge>
+Contradictions: <any conflicting findings>
+Gaps: <what needs investigation>
+Version: <current binary version>"
+```
+
+**Exit criteria:** Wiki context loaded and recorded. You know what is already
+known and what gaps this investigation should fill."""
+
+[[steps]]
+id = "generate-plans"
+title = "Create 3+ diverse RE approaches"
+needs = ["read-wiki"]
+description = """
+Generate multiple fundamentally different RE plans. Do NOT commit to one
+approach — the PairCoder methodology requires exploring diverse strategies.
+
+**Plan types to consider:**
+
+1. **Static analysis** — Ghidra decompilation, cross-references, string searches,
+   vtable analysis. Best for understanding code structure and call graphs.
+
+2. **Runtime probing** — breakpoints, memory watchpoints, call tracing.
+   Best for understanding dynamic behavior and data flow.
+
+3. **Differential analysis** — coredump snapshots before/after game actions,
+   memory region comparison. Best for finding game-state structures.
+
+4. **Pattern matching** — known struct signatures, common game engine patterns,
+   Paradox-specific conventions. Best when similar structures are already documented.
+
+**Generate at least {{max_plans}} plans, each using a DIFFERENT primary technique.**
+
+Each plan should specify:
+- Primary technique (static/runtime/differential/pattern)
+- Specific tools and commands to run
+- What the plan expects to find
+- How to verify findings
+- Known risks or limitations
+
+**Record plans in bead metadata:**
+```bash
+bd update {{issue}} \
+  --set-metadata gc.plans='[{"name":"<plan1>","type":"<type>","summary":"<what>"},...]' \
+  --set-metadata gc.active_plan="<most promising plan name>" \
+  --set-metadata gc.plan_index="0" \
+  --set-metadata gc.attempt_history="[]" \
+  --set-metadata gc.refinements="0"
+```
+
+**Selection criteria for the first plan:**
+- Prefer plans that build on existing wiki knowledge
+- Prefer cheaper techniques first (strings/patterns before full decompilation)
+- Prefer techniques that produce verifiable intermediate results
+
+**Exit criteria:** At least {{max_plans}} diverse plans recorded in metadata.
+Active plan selected. Plan index and attempt history initialized."""
+
+[[steps]]
+id = "execute-plan"
+title = "Run the active RE plan"
+needs = ["generate-plans"]
+description = """
+Execute the currently active plan using the appropriate RE tools.
+
+**1. Read the active plan:**
+```bash
+PLANS=$(bd show {{issue}} --json | jq -r '.metadata["gc.plans"]')
+PLAN_INDEX=$(bd show {{issue}} --json | jq -r '.metadata["gc.plan_index"]')
+ACTIVE=$(bd show {{issue}} --json | jq -r '.metadata["gc.active_plan"]')
+```
+
+**2. Execute the plan's steps:**
+
+Use the tools documented in the RE Tools reference. Record findings
+incrementally in bead notes as you go — do not wait until the end.
+
+```bash
+# After each significant finding:
+bd update {{issue}} --notes "Finding: <description>
+Address: <hex address>
+Type: <offset|struct|function|behavior>
+Confidence: <high|medium|low>
+Evidence: <how verified>"
+```
+
+**3. On completion, set outcome metadata:**
+
+```bash
+# On success:
+bd update {{issue}} \
+  --set-metadata gc.outcome="success" \
+  --set-metadata gc.findings='{"type":"<type>","data":{...}}'
+
+# On partial results:
+bd update {{issue}} \
+  --set-metadata gc.outcome="partial" \
+  --set-metadata gc.findings='{"type":"<type>","data":{...},"missing":"<what>"}' \
+  --set-metadata gc.error_signature=""
+
+# On blocked (tool failure, access issue):
+bd update {{issue}} \
+  --set-metadata gc.outcome="blocked" \
+  --set-metadata gc.error_signature="<hash or short description of error>"
+
+# On failed (approach did not work):
+bd update {{issue}} \
+  --set-metadata gc.outcome="failed" \
+  --set-metadata gc.error_signature="<hash or short description of failure>"
+```
+
+**Exit criteria:** Plan executed. Outcome and findings (or error signature)
+recorded in bead metadata."""
+
+[[steps]]
+id = "evaluate"
+title = "Decide next action based on outcome"
+needs = ["execute-plan"]
+description = """
+Evaluate the outcome and decide: succeed, refine, switch plan, or escalate.
+
+**Read current state:**
+```bash
+OUTCOME=$(bd show {{issue}} --json | jq -r '.metadata["gc.outcome"]')
+ERROR_SIG=$(bd show {{issue}} --json | jq -r '.metadata["gc.error_signature"]')
+HISTORY=$(bd show {{issue}} --json | jq -r '.metadata["gc.attempt_history"]')
+REFINEMENTS=$(bd show {{issue}} --json | jq -r '.metadata["gc.refinements"]')
+PLAN_INDEX=$(bd show {{issue}} --json | jq -r '.metadata["gc.plan_index"]')
+PLANS=$(bd show {{issue}} --json | jq -r '.metadata["gc.plans"]')
+NUM_PLANS=$(echo "$PLANS" | jq 'length')
+```
+
+**Decision tree:**
+
+### SUCCESS → go to update-wiki
+Findings are solid. Proceed to file results.
+
+### PARTIAL → refine current plan
+Some results but incomplete. Check refinement budget:
+```bash
+if [ "$REFINEMENTS" -ge {{max_refinements}} ]; then
+  # Budget exhausted for this plan — treat as plan switch
+  # (fall through to BLOCKED/FAILED logic)
+else
+  # Refine: adjust plan parameters, narrow scope, try adjacent addresses
+  NEW_REFINEMENTS=$((REFINEMENTS + 1))
+  bd update {{issue}} --set-metadata gc.refinements="$NEW_REFINEMENTS"
+  # Append to attempt history
+  bd update {{issue}} --set-metadata gc.attempt_history="$(echo "$HISTORY" | jq '. + [{"plan":"'"$ACTIVE"'","outcome":"partial","error":"'"$ERROR_SIG"'"}]')"
+  # → go to next-iteration
+fi
+```
+
+### BLOCKED or FAILED → check for loop, then switch or escalate
+
+**Loop detection:** Check if this error signature has been seen before.
+```bash
+SEEN_BEFORE=$(echo "$HISTORY" | jq '[.[] | select(.error == "'"$ERROR_SIG"'")] | length')
+```
+
+**If same error seen before on this plan → PLAN SWITCH:**
+```bash
+NEW_INDEX=$((PLAN_INDEX + 1))
+if [ "$NEW_INDEX" -ge "$NUM_PLANS" ]; then
+  # ALL PLANS EXHAUSTED → escalate to mayor
+  bd update {{issue}} --notes "All {{max_plans}} plans exhausted. Escalating."
+  gc mail send mayor/ -s "ESCALATION: RE investigation exhausted all plans [HIGH]" -m "
+Issue: {{issue}}
+Plans tried: $(echo "$PLANS" | jq -r '.[].name' | tr '\n' ', ')
+Last error: $ERROR_SIG
+History: $HISTORY"
+  bd update {{issue}} --status=escalated
+  gc runtime drain-ack
+  exit
+fi
+
+# Switch to next plan
+NEXT_PLAN=$(echo "$PLANS" | jq -r ".[$NEW_INDEX].name")
+bd update {{issue}} \
+  --set-metadata gc.plan_index="$NEW_INDEX" \
+  --set-metadata gc.active_plan="$NEXT_PLAN" \
+  --set-metadata gc.refinements="0" \
+  --set-metadata gc.attempt_history="$(echo "$HISTORY" | jq '. + [{"plan":"'"$ACTIVE"'","outcome":"'"$OUTCOME"'","error":"'"$ERROR_SIG"'"}]')"
+# → go to next-iteration
+```
+
+**If new error → refine with error context:**
+Same as PARTIAL refinement above (increment refinements, append to history).
+
+**Exit criteria:** Decision made and metadata updated. Either proceeding to
+update-wiki (success), next-iteration (refine/switch), or escalated and exited."""
+
+[[steps]]
+id = "update-wiki"
+title = "Integrate findings into wiki and file implementation beads"
+needs = ["evaluate"]
+description = """
+Investigation succeeded. Integrate findings and create downstream work.
+
+**1. Create ingest bead for archivist:**
+
+The archivist maintains the wiki. File findings as an ingest bead:
+```bash
+bd create -t "Wiki ingest: <investigation summary>" \
+  -d "Findings from RE investigation {{issue}}.
+
+## Discovered Data
+<structured findings: offsets, struct layouts, function signatures>
+
+## Binary Version
+<version these findings apply to>
+
+## Confidence
+<high|medium|low and reasoning>
+
+## Related Wiki Pages
+<pages that should be updated or created>
+
+## Raw Evidence
+<key evidence supporting findings>" \
+  --label pool:archivist \
+  --set-metadata gc.source_investigation="{{issue}}" \
+  --set-metadata gc.routed_to="<rig>/archivist"
+```
+
+**2. If findings imply code work, create implementation bead for polecats:**
+
+Only create this if the findings enable concrete code changes (new hooks,
+struct definitions, offset tables, etc.):
+```bash
+bd create -t "Implement: <what to build from findings>" \
+  -d "RE findings from {{issue}} enable implementation.
+
+## Context
+<synthesized context from wiki + new findings>
+
+## Offsets / Struct Layouts
+<specific offsets and layouts to use>
+
+## Function Signatures
+<discovered function signatures>
+
+## Acceptance Criteria
+- <concrete criteria based on findings>" \
+  --label pool:polecat \
+  --set-metadata gc.source_investigation="{{issue}}" \
+  --set-metadata gc.routed_to="<rig>/polecat"
+```
+
+**3. Close the investigation bead:**
+```bash
+bd update {{issue}} \
+  --notes "Investigation complete. Filed archivist ingest and implementation beads." \
+  --status=closed
+gc runtime drain-ack
+exit
+```
+
+**Exit criteria:** Archivist ingest bead created. Implementation bead created
+(if applicable). Investigation bead closed. Session drained and exited."""
+
+[[steps]]
+id = "next-iteration"
+title = "Pour next wisp and continue investigation loop"
+needs = ["evaluate"]
+description = """
+The current plan needs refinement or a new plan was selected.
+Pour a new wisp of mol-re-investigate to continue the loop.
+
+**1. Pour next wisp:**
+```bash
+gc formula pour mol-re-investigate \
+  --var issue={{issue}} \
+  --var max_plans={{max_plans}} \
+  --var max_refinements={{max_refinements}}
+```
+
+The new wisp inherits the current bead's metadata, which already contains:
+- `gc.plans` — the full set of generated plans
+- `gc.active_plan` — the currently active plan (may have been switched)
+- `gc.plan_index` — current index into plans array
+- `gc.attempt_history` — all prior attempts with outcomes and error signatures
+- `gc.refinements` — refinement count for the current plan
+- `gc.error_signature` — last error signature (for loop detection)
+
+**2. Burn current wisp:**
+The current wisp is consumed. The new wisp picks up from read-wiki
+(which will be fast since wiki context is already loaded) and continues
+through the PairCoder loop with accumulated history.
+
+```bash
+gc runtime drain-ack
+exit
+```
+
+**Exit criteria:** New wisp poured with investigation state. Current wisp
+drained and exited."""
