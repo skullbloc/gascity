@@ -334,32 +334,3 @@ find {{pack_dir}} -type f | sort
 Fix any issues found.
 
 **Exit criteria:** Pack is complete, consistent, and ready to commit."""
-
-[[steps]]
-id = "commit-and-branch"
-needs = ["self-review"]
-title = "Commit pack and prepare for PR"
-description = """
-Create a feature branch and commit the pack.
-
-```bash
-git checkout -b pack/{{pack_name}}
-git add {{pack_dir}}/
-git commit -m "feat: add {{pack_name}} example pack
-
-Add {{pack_name}} pack to examples/ with:
-- pack.toml defining agents and configuration
-- Prompt templates for each agent role
-- Formula files for pack-specific workflows
-- Shared template fragments
-
-<brief description of what this pack does>"
-```
-
-Update the bead:
-```bash
-bd update {{issue}} --set-metadata branch=pack/{{pack_name}} \
-  --notes "Pack created at {{pack_dir}}/. Ready for draft PR."
-```
-
-**Exit criteria:** Clean commit on feature branch, bead updated."""
