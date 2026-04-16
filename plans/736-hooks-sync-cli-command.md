@@ -231,3 +231,52 @@ Passes. Ship it.
 - Per-agent provider iteration (workspace-level only for v1).
 - Diff-quality `--dry-run`.
 - Rename / alias of `hook` vs. `hooks` — they're distinct namespaces.
+
+## PR Description
+
+```
+feat: add `gc hooks sync` command to propagate hook file changes
+
+Closes #736.
+
+## Summary
+
+- New `gc hooks` parent with one subcommand, `gc hooks sync`, that
+  reinstalls provider hook files for the current city. The default
+  provider list comes from `workspace.install_agent_hooks` (falling
+  back to `["claude"]`). `--providers` overrides the config list;
+  `--dry-run` reports the resolved providers without writing.
+- Thin cobra wrapper over the existing `hooks.Install` helper that
+  `gc init`, `gc rig add`, and the agent spawn path already use.
+  Idempotent — a second run is a no-op.
+- Prints a hint to run `gc supervisor reload` so a live supervisor
+  picks up the new `.gc/settings.json`.
+
+## Scope (intentional for v1)
+
+- Workspace-level providers only. Per-agent `install_agent_hooks`
+  iteration is deferred; claude is city-wide and covers the stated
+  upstream use case.
+- `--dry-run` reports intent without diffing file content. A diff-
+  quality dry-run would require factoring the "compute desired
+  content" step out of `installClaude`; deferred.
+- No supervisor-reload trigger — printed hint only.
+
+## Test plan
+
+- [x] Unit tests in `cmd/gc/cmd_hooks_test.go` cover: default claude,
+  workspace providers, `--providers` override, validation error,
+  idempotent second run, `--dry-run`, user-edit preservation, error
+  surfacing via injected FS, and missing-city error.
+- [x] `make check` passes (fmt, lint, vet, unit tests).
+- [x] `make check-docs` passes.
+```
+
+Reviewer pre-flight (for my own use — delete before publishing):
+
+- PR is ~100 LOC over 3 files (`cmd/gc/cmd_hooks.go`, `cmd/gc/cmd_hooks_test.go`, `cmd/gc/main.go` one-line registration), within the <200/≤5 sweet spot.
+- Help strings and doc comments match the actual behavior (workspace-scoped, claude default, idempotent, hint-only reload).
+- Tests assert on specific substrings (`"synced providers: claude"`, `"would sync providers: ..."`, `"supported:"`) rather than "some output produced."
+- Edge cases covered: unsupported provider name (validation), injected FS write error (error path), missing city directory (load error), user-edited `hooks/claude.json` preserved.
+- No backward-compat changes: this is an additive command; existing `gc hook` (singular) is unaffected.
+- Sibling-API consistency: `newHooksCmd` / `newHooksSyncCmd` follow the `newConfigCmd` / `newConfigShowCmd` parent-with-subcommands shape; `cmdHooksSync` / `doHooksSync` follow the `cmdAgentAdd` / `doAgentAdd` CLI-vs-pure split (pure function takes `fs fsys.FS` for testability).
