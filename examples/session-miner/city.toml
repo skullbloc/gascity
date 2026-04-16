@@ -1,0 +1,27 @@
+# Minimal city for running the session-miner pack against a real corpus.
+#
+# Composes one rig (the directory where mining outputs land) with the
+# session-miner pack. The rig can be any git repo; the pack writes its
+# outputs under `<output_dir>` (configurable per invocation), defaulting
+# to `<rig>/.gc/mined/<project-slug>/<date>/`.
+#
+# Typical setup:
+#
+#   mkdir ~/session-miner-demo && cd $_
+#   git init
+#   cp <repo>/examples/session-miner/city.toml .
+#   # adjust the [[rigs]] path below to point at this repo
+#   gc start .
+#   # dispatch a mining run:
+#   gc sling mining/miner_coordinator mol-session-mining --formula \
+#     --var project_slug=-home-admin-workspace-ck3proj
+
+[workspace]
+name = "session-miner-demo"
+provider = "claude"
+
+[[rigs]]
+name = "mining"
+# Adjust the path below to point at the git repo where outputs will land.
+path = "."
+includes = ["packs/session-miner"]

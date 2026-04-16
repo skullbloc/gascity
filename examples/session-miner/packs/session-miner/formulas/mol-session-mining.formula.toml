@@ -1,0 +1,528 @@
+description = """
+Mine a filtered Claude Code session JSONL corpus for draft blog posts.
+
+The pack's miner_coordinator is the one agent that drives this
+formula. It resolves the corpus, dispatches a planner to generate
+perspective files, opens a human gate for review/edit, dispatches
+the lens pool in parallel, waits for everyone to finish, and then
+drafts the posts itself.
+
+## Typical invocation
+
+```bash
+gc sling <rig>/miner_coordinator mol-session-mining --formula \\
+  --var project_slug=-home-admin-workspace-ck3proj \\
+  --var since=2026-03-01 \\
+  --var until=2026-04-16 \\
+  --var focus=\"methodology pivots, cross-session entity drift\"
+```
+
+## Override hatches
+
+- `--var skip_planning=true --var perspectives_override=/path/a.md,/path/b.md`
+  to supply perspectives directly and skip the planner.
+- `--var skip_gate=true` to run autonomously — no human review step.
+- `--var output_dir=/abs/path` to override the default output location.
+- `--var drafting_instructions_path=/abs/path.md` to override the
+  pack's default drafting voice.
+
+## Output layout
+
+```
+<output_dir>/
+├── corpus-manifest.json
+├── perspectives/
+│   ├── index.json
+│   └── <slug>.md   (3–5 files, one per angle)
+├── observations/
+│   └── <slug>.md   (one per perspective)
+└── posts/
+    ├── index.md
+    └── <slug>.md   (zero or more, coordinator's call)
+```
+"""
+formula = "mol-session-mining"
+version = 1
+
+[vars.project_slug]
+description = "Claude Code project slug under ~/.claude/projects/ to mine."
+required = true
+
+[vars.project_slugs]
+description = "Comma-separated list of slugs (overrides project_slug when set)."
+default = ""
+
+[vars.since]
+description = "ISO date; keep sessions with first-line timestamp >= this."
+default = ""
+
+[vars.until]
+description = "ISO date; keep sessions with first-line timestamp <= this."
+default = ""
+
+[vars.session_ids]
+description = "Comma-separated list of session UUIDs to include explicitly."
+default = ""
+
+[vars.focus]
+description = "Optional operator-supplied focus string for the planner."
+default = ""
+
+[vars.output_dir]
+description = "Where to write outputs. Empty -> .gc/mined/<slug>/<yyyy-mm-dd>/"
+default = ""
+
+[vars.drafting_instructions_path]
+description = "Path to a markdown drafting-style guide. Empty -> pack default."
+default = ""
+
+[vars.perspectives_override]
+description = "Comma-separated paths to perspective files. Implies skip_planning."
+default = ""
+
+[vars.skip_planning]
+description = "If true, bypass the planner entirely (requires perspectives_override)."
+default = "false"
+
+[vars.skip_gate]
+description = "If true, skip the human review gate after planning."
+default = "false"
+
+[vars.min_perspectives]
+description = "Planner target floor."
+default = "3"
+
+[vars.max_perspectives]
+description = "Planner target ceiling."
+default = "5"
+
+
+# ── STEP 1 — Establish working paths and resolve the corpus. ──────────
+[[steps]]
+id = "setup-and-resolve"
+title = "Set up output paths and resolve the corpus"
+description = """
+You are the miner_coordinator. Your job across this formula is:
+resolve the corpus, dispatch a planner, open a human gate, dispatch
+the lens pool in parallel, wait for everyone, then draft posts.
+
+## 1. Locate the pack's scripts
+
+Find the scripts directory of this pack. If `$GC_PACK_DIR` is set,
+use `$GC_PACK_DIR/scripts`. Otherwise search for it:
+
+```bash
+PACK_SCRIPTS=$(find "$HOME" "$PWD" -type d -path '*/session-miner/scripts' 2>/dev/null | head -1)
+if [ -z "$PACK_SCRIPTS" ]; then
+  echo "Cannot locate session-miner pack scripts directory. Abort."
+  exit 1
+fi
+```
+
+## 2. Resolve the output directory
+
+```bash
+OUTPUT_DIR="{{output_dir}}"
+if [ -z "$OUTPUT_DIR" ]; then
+  TODAY=$(date -u +%Y-%m-%d)
+  OUTPUT_DIR=".gc/mined/{{project_slug}}/$TODAY"
+fi
+mkdir -p "$OUTPUT_DIR/perspectives" "$OUTPUT_DIR/observations" "$OUTPUT_DIR/posts"
+```
+
+Persist `OUTPUT_DIR` on the root bead so subsequent steps can read it:
+
+```bash
+bd update {{issue}} --set-metadata output_dir="$OUTPUT_DIR" \\
+                    --set-metadata pack_scripts="$PACK_SCRIPTS"
+```
+
+## 3. Resolve the drafting instructions path
+
+```bash
+DRAFTING="{{drafting_instructions_path}}"
+if [ -z "$DRAFTING" ]; then
+  DRAFTING=$(dirname "$PACK_SCRIPTS")/prompts/shared/default-drafting-style.md
+fi
+if [ ! -r "$DRAFTING" ]; then
+  echo "Drafting instructions not readable: $DRAFTING. Abort."
+  exit 1
+fi
+bd update {{issue}} --set-metadata drafting_instructions="$DRAFTING"
+```
+
+## 4. Resolve the corpus
+
+Run the resolver. It filters JSONL files per your vars and writes
+`corpus-manifest.json`.
+
+```bash
+"$PACK_SCRIPTS/resolve-corpus.sh" \\
+  --project-slug '{{project_slug}}' \\
+  --project-slugs '{{project_slugs}}' \\
+  --since '{{since}}' \\
+  --until '{{until}}' \\
+  --session-ids '{{session_ids}}' \\
+  --output "$OUTPUT_DIR/corpus-manifest.json"
+```
+
+Record a summary:
+
+```bash
+SESSIONS=$(jq '.sessions | length' "$OUTPUT_DIR/corpus-manifest.json")
+BYTES=$(jq '.total_bytes' "$OUTPUT_DIR/corpus-manifest.json")
+echo "Resolved $SESSIONS sessions, $BYTES bytes."
+bd update {{issue}} --set-metadata corpus_manifest="$OUTPUT_DIR/corpus-manifest.json" \\
+                    --set-metadata corpus_sessions="$SESSIONS"
+```
+
+Close this step when the manifest is written and the metadata is on
+the root bead.
+"""
+
+
+# ── STEP 2 — Plan perspectives (or bypass). ───────────────────────────
+[[steps]]
+id = "plan-perspectives"
+title = "Generate or import perspective files"
+needs = ["setup-and-resolve"]
+description = """
+Either dispatch the perspective_planner to generate files, or copy in
+explicit perspective files the operator supplied.
+
+## Recover paths from root-bead metadata
+
+```bash
+ROOT_META=$(bd show {{issue}} --json | jq -r '.metadata')
+OUTPUT_DIR=$(echo "$ROOT_META" | jq -r '.output_dir')
+PACK_SCRIPTS=$(echo "$ROOT_META" | jq -r '.pack_scripts')
+CORPUS_MANIFEST=$(echo "$ROOT_META" | jq -r '.corpus_manifest')
+```
+
+## Bypass branch: explicit perspectives
+
+If `{{skip_planning}}` is `true`:
+
+```bash
+"$PACK_SCRIPTS/prepare-explicit-perspectives.sh" \\
+  --paths '{{perspectives_override}}' \\
+  --dest "$OUTPUT_DIR/perspectives" \\
+  --manifest "$CORPUS_MANIFEST"
+```
+
+That script copies the supplied files into
+`$OUTPUT_DIR/perspectives/`, rewrites their frontmatter
+(`corpus_manifest_sha256`, `generated_at`) to reflect this run, and
+emits `index.json`. Skip to step `human-gate` after this.
+
+## Default branch: dispatch the planner
+
+Otherwise create a planner bead and sling it to the pool:
+
+```bash
+RIG=$(bd show {{issue}} --json | jq -r '.metadata."gc.routed_to"' | cut -d/ -f1)
+PLANNER_BEAD=$(bd create "Plan perspectives for mining run" --type task --json | jq -r '.id')
+bd update "$PLANNER_BEAD" \\
+  --set-metadata corpus_manifest="$CORPUS_MANIFEST" \\
+  --set-metadata focus='{{focus}}' \\
+  --set-metadata perspectives_dir="$OUTPUT_DIR/perspectives" \\
+  --set-metadata min_perspectives='{{min_perspectives}}' \\
+  --set-metadata max_perspectives='{{max_perspectives}}'
+bd dep add "$PLANNER_BEAD" --blocks {{issue}}
+gc sling "$RIG/perspective_planner" "$PLANNER_BEAD" --nudge
+echo "Dispatched planner as $PLANNER_BEAD. Waiting."
+```
+
+Poll until the planner bead closes:
+
+```bash
+while true; do
+  STATUS=$(bd show "$PLANNER_BEAD" --json | jq -r '.status')
+  if [ "$STATUS" = "closed" ]; then
+    break
+  fi
+  sleep 30
+done
+```
+
+Verify `index.json` exists and lists at least `{{min_perspectives}}`
+perspective files. If not, abort the run with a clear error.
+
+```bash
+if [ ! -s "$OUTPUT_DIR/perspectives/index.json" ]; then
+  echo "Planner did not produce an index.json. Abort."
+  exit 1
+fi
+```
+
+Close this step.
+"""
+
+
+# ── STEP 3 — Human gate. ──────────────────────────────────────────────
+[[steps]]
+id = "human-gate"
+title = "Human review of perspective files"
+needs = ["plan-perspectives"]
+description = """
+Give the operator a chance to review, edit, or delete perspective
+files before the lens pool picks them up.
+
+## Recover paths
+
+```bash
+OUTPUT_DIR=$(bd show {{issue}} --json | jq -r '.metadata.output_dir')
+```
+
+## Bypass branch
+
+If `{{skip_gate}}` is `true`, just close this step — no bead needed.
+
+## Default branch: create the gate bead
+
+```bash
+GATE_BEAD=$(bd create \\
+  "[session-miner] Review perspective files in $OUTPUT_DIR/perspectives/" \\
+  --type task \\
+  --description "Review the perspective files in $OUTPUT_DIR/perspectives/. \\
+Edit or delete any you don't want. When ready to release the lens pool, \\
+close this bead with: bd close <id>" \\
+  --json | jq -r '.id')
+bd dep add "$GATE_BEAD" --blocks {{issue}}
+echo "Human gate bead: $GATE_BEAD"
+echo "Operator: review files at $OUTPUT_DIR/perspectives/, then: bd close $GATE_BEAD"
+```
+
+Poll until the gate bead closes. Keep the message visible — if this
+is an interactive session the operator may need the reminder.
+
+```bash
+while true; do
+  STATUS=$(bd show "$GATE_BEAD" --json | jq -r '.status')
+  [ "$STATUS" = "closed" ] && break
+  sleep 15
+done
+```
+
+After the gate is closed, re-scan the perspectives directory to
+build the authoritative list (operator may have deleted or added
+files):
+
+```bash
+ls "$OUTPUT_DIR/perspectives/"*.md > "$OUTPUT_DIR/perspectives/final.list"
+COUNT=$(wc -l < "$OUTPUT_DIR/perspectives/final.list")
+echo "Gate released; $COUNT perspectives to dispatch."
+if [ "$COUNT" -lt 1 ]; then
+  echo "No perspectives remain after gate. Abort."
+  exit 1
+fi
+```
+
+Close this step.
+"""
+
+
+# ── STEP 4 — Dispatch the lens pool in parallel. ─────────────────────
+[[steps]]
+id = "dispatch-lenses"
+title = "Dispatch the lens pool for each perspective"
+needs = ["human-gate"]
+description = """
+Create one bead per perspective file and sling each to the lens pool.
+
+```bash
+ROOT_META=$(bd show {{issue}} --json | jq -r '.metadata')
+OUTPUT_DIR=$(echo "$ROOT_META" | jq -r '.output_dir')
+CORPUS_MANIFEST=$(echo "$ROOT_META" | jq -r '.corpus_manifest')
+RIG=$(echo "$ROOT_META" | jq -r '."gc.routed_to"' | cut -d/ -f1)
+
+LENS_BEADS=""
+while IFS= read -r PERSP; do
+  SLUG=$(basename "$PERSP" .md)
+  BEAD=$(bd create "Observe from perspective: $SLUG" --type task --json | jq -r '.id')
+  bd update "$BEAD" \\
+    --set-metadata perspective_path="$PERSP" \\
+    --set-metadata corpus_manifest="$CORPUS_MANIFEST" \\
+    --set-metadata observations_path="$OUTPUT_DIR/observations/$SLUG.md"
+  bd dep add "$BEAD" --blocks {{issue}}
+  gc sling "$RIG/lens" "$BEAD" --nudge
+  LENS_BEADS="$LENS_BEADS $BEAD"
+done < "$OUTPUT_DIR/perspectives/final.list"
+
+echo "$LENS_BEADS" > "$OUTPUT_DIR/.lens-beads"
+echo "Dispatched: $LENS_BEADS"
+```
+
+Close this step.
+"""
+
+
+# ── STEP 5 — Wait for all lens beads to close. ────────────────────────
+[[steps]]
+id = "await-lenses"
+title = "Wait for every lens bead to close"
+needs = ["dispatch-lenses"]
+description = """
+Poll each lens bead ID in `.lens-beads` until all are closed.
+
+```bash
+OUTPUT_DIR=$(bd show {{issue}} --json | jq -r '.metadata.output_dir')
+PACK_SCRIPTS=$(bd show {{issue}} --json | jq -r '.metadata.pack_scripts')
+"$PACK_SCRIPTS/await-children.sh" "$OUTPUT_DIR/.lens-beads"
+```
+
+The `await-children.sh` script polls in a loop, logging status
+changes, and exits 0 when every listed bead is closed.
+
+After all close, sanity-check that every observations file exists
+(the lens agent may have errored without producing output):
+
+```bash
+MISSING=0
+while IFS= read -r PERSP; do
+  SLUG=$(basename "$PERSP" .md)
+  if [ ! -s "$OUTPUT_DIR/observations/$SLUG.md" ]; then
+    echo "MISSING: observations/$SLUG.md"
+    MISSING=$((MISSING + 1))
+  fi
+done < "$OUTPUT_DIR/perspectives/final.list"
+
+if [ "$MISSING" -gt 0 ]; then
+  echo "$MISSING observation files missing. Consider investigating before drafting."
+fi
+```
+
+Proceeding even with missing files is OK — the coordinator will work
+from whatever observations exist. Close this step.
+"""
+
+
+# ── STEP 6 — Draft posts. ─────────────────────────────────────────────
+[[steps]]
+id = "draft-posts"
+title = "Draft blog-post-style markdown from the observations"
+needs = ["await-lenses"]
+description = """
+This is the authoring step. You (miner_coordinator) now switch from
+orchestration to drafting.
+
+## Read your authoring brief
+
+```bash
+ROOT_META=$(bd show {{issue}} --json | jq -r '.metadata')
+OUTPUT_DIR=$(echo "$ROOT_META" | jq -r '.output_dir')
+DRAFTING=$(echo "$ROOT_META" | jq -r '.drafting_instructions')
+OBS_DIR="$OUTPUT_DIR/observations"
+POSTS_DIR="$OUTPUT_DIR/posts"
+```
+
+Read the drafting voice guide fully:
+
+```bash
+cat "$DRAFTING"
+```
+
+## Read every observation file
+
+```bash
+ls -1 "$OBS_DIR"/*.md
+```
+
+Read them all. Fully, not skimmed.
+
+## Draft posts
+
+Apply the voice guide. Identify themes with enough substance and
+surprise to clear the bar. Zero is allowed. Write each post to
+`$POSTS_DIR/<slug>.md`. Slug is lowercase kebab-case, ≤ 40 chars.
+
+Every post frontmatter must include:
+
+```yaml
+---
+kind: draft-post
+pack: session-miner
+pack_version: 0.1.0
+generator: session-miner/miner_coordinator
+generated_at: <ISO-8601 UTC>
+corpus_manifest_sha256: <sha256 of $CORPUS_MANIFEST>
+sources:
+  - observations/<perspective>.md#OBS-001
+  - ...
+schema_version: 1
+---
+```
+
+The `sources` list enumerates every observation block cited in the
+body. Cite inline in brackets: `[OBS-007]`.
+
+## Write the index
+
+Finally write `$POSTS_DIR/index.md`:
+
+```markdown
+---
+kind: draft-post-index
+pack: session-miner
+pack_version: 0.1.0
+generator: session-miner/miner_coordinator
+generated_at: <ISO-8601 UTC>
+schema_version: 1
+post_count: N
+---
+
+# Draft posts
+
+## Drafted
+
+- **[Title](slug.md)** — one-line rationale; observation IDs it
+  draws from.
+
+## Not drafted
+
+<Optional: themes considered and rejected, one line each.>
+```
+
+If `post_count` is 0, still write `index.md` with a short note under
+`## Drafted` explaining why nothing cleared the bar.
+
+Close this step when every post file and the index are on disk.
+"""
+
+
+# ── STEP 7 — Final report. ────────────────────────────────────────────
+[[steps]]
+id = "report"
+title = "Report and exit"
+needs = ["draft-posts"]
+description = """
+Print the final summary and exit.
+
+```bash
+OUTPUT_DIR=$(bd show {{issue}} --json | jq -r '.metadata.output_dir')
+
+echo "=== session-miner run complete ==="
+echo "Output dir: $OUTPUT_DIR"
+echo
+echo "Perspectives:"
+ls "$OUTPUT_DIR/perspectives/"*.md 2>/dev/null | while read f; do echo "  $(basename "$f")"; done
+echo
+echo "Observations:"
+ls "$OUTPUT_DIR/observations/"*.md 2>/dev/null | while read f; do echo "  $(basename "$f")"; done
+echo
+echo "Posts:"
+ls "$OUTPUT_DIR/posts/"*.md 2>/dev/null | while read f; do echo "  $(basename "$f")"; done
+echo
+echo "Index: $OUTPUT_DIR/posts/index.md"
+```
+
+Record final metadata and exit cleanly:
+
+```bash
+bd update {{issue}} --set-metadata mining_complete=true \\
+                    --notes "Mining complete. Posts at $OUTPUT_DIR/posts/"
+gc runtime drain-ack 2>/dev/null || true
+```
+
+Close this step.
+"""

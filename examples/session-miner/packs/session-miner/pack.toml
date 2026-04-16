@@ -1,0 +1,52 @@
+# session-miner — mine Claude Code session JSONL corpora for draft posts.
+#
+# Three rig-scoped agents:
+#   perspective_planner — reads a sample of the filtered corpus, writes
+#     3–5 perspective files describing angles worth examining.
+#   lens — generic observation gatherer, pool of up to 4. Reads one
+#     perspective file per bead, emits structured observations.
+#   miner_coordinator — reads all observations, drafts blog-post-style
+#     markdown files (zero or more; coordinator decides).
+#
+# Orchestrated by formulas/session-mining.formula.toml.
+
+[pack]
+name = "session-miner"
+schema = 1
+
+# ── PERSPECTIVE PLANNER — singleton. Rig-scoped. ───────────────────────
+[[agent]]
+name = "perspective_planner"
+scope = "rig"
+prompt_template = "prompts/perspective-planner.md.tmpl"
+nudge = "Check your hook for a planning job."
+overlay_dir = "overlays/default"
+idle_timeout = "30m"
+min_active_sessions = 0
+max_active_sessions = 1
+
+# ── LENS — generic observation gatherer. Pool. Rig-scoped. ─────────────
+[[agent]]
+name = "lens"
+scope = "rig"
+prompt_template = "prompts/lens.md.tmpl"
+nudge = "Check your hook for a lens job."
+overlay_dir = "overlays/default"
+idle_timeout = "30m"
+min_active_sessions = 0
+max_active_sessions = 4
+
+# ── MINER COORDINATOR — singleton author. Rig-scoped. ──────────────────
+[[agent]]
+name = "miner_coordinator"
+scope = "rig"
+prompt_template = "prompts/coordinator.md.tmpl"
+nudge = "Check your hook for a coordination job."
+overlay_dir = "overlays/default"
+idle_timeout = "1h"
+min_active_sessions = 0
+max_active_sessions = 1
+
+# ── FORMULAS ───────────────────────────────────────────────────────────
+[formulas]
+dir = "formulas"
