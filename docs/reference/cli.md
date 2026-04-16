@@ -36,6 +36,7 @@ gc [flags]
 | [gc handoff](#gc-handoff) | Send handoff mail and restart this session |
 | [gc help](#gc-help) | Help about any command |
 | [gc hook](#gc-hook) | Check for available work (use --inject for Stop hook output) |
+| [gc hooks](#gc-hooks) | Manage agent hook files |
 | [gc import](#gc-import) | Manage pack imports |
 | [gc init](#gc-init) | Initialize a new city |
 | [gc mail](#gc-mail) | Send and receive messages between agents and humans |
@@ -895,6 +896,54 @@ gc hook [agent] [flags]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--inject` | bool |  | output &lt;system-reminder&gt; block for hook injection |
+
+## gc hooks
+
+Manage provider agent hook files for the current city.
+
+Providers (claude, codex, gemini, opencode, copilot, cursor, pi, omp)
+each ship a hook file embedded into the gc binary. "gc init" and
+"gc rig add" install these files; "gc hooks sync" reinstalls them so
+changes to hooks/claude.json propagate to .gc/settings.json.
+
+```
+gc hooks
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| [gc hooks sync](#gc-hooks-sync) | Reinstall agent hook files for the current city |
+
+## gc hooks sync
+
+Reinstall agent hook files for the current city.
+
+Resolves providers from workspace.install_agent_hooks (default
+["claude"] when unset), validates them, and calls the installer.
+Propagates hooks/claude.json changes into .gc/settings.json. The
+operation is idempotent — unchanged files are left alone, so running
+sync twice is a no-op on the second call.
+
+Use --providers to override the config list (comma-separated or
+repeated). Use --dry-run to report the resolved provider list
+without writing.
+
+```
+gc hooks sync [flags]
+```
+
+**Example:**
+
+```
+gc hooks sync
+  gc hooks sync --providers claude,gemini
+  gc hooks sync --dry-run
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--dry-run` | bool |  | report the resolved providers without writing files |
+| `--providers` | stringSlice |  | override providers to install (comma-separated; default: from workspace.install_agent_hooks) |
 
 ## gc import
 
