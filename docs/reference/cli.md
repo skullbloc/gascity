@@ -86,8 +86,8 @@ gc agent
 Add a new agent scaffold under agents/&lt;name&gt;/.
 
 Creates agents/&lt;name&gt;/prompt.template.md and, when needed,
-agents/&lt;name&gt;/agent.toml. This is the Pack/City v2 path and does not
-append [[agent]] blocks to city.toml.
+agents/&lt;name&gt;/agent.toml. These files live in the city directory and do
+not append [[agent]] blocks to city.toml.
 
 Use --prompt-template to copy prompt content from an existing file into
 the canonical prompt.template.md location. Use --dir to record a rig or
@@ -983,11 +983,10 @@ gc import upgrade [name]
 Create a new Gas City workspace in the given directory (or cwd).
 
 Runs an interactive wizard to choose a config template and coding agent
-provider. Creates the .gc/ runtime directory, a transitional Pack/City v2
-scaffold (pack.toml, city.toml, convention directories, and .template.md
-prompt templates), and writes the default formulas. Use --provider to create
-the default mayor city non-interactively, or --file to initialize from an
-existing TOML config file.
+provider. Creates the .gc/ runtime directory plus pack.toml, city.toml,
+the standard top-level directories, and .template.md prompt templates, then
+writes the default formulas. Use --provider to create the default mayor city
+non-interactively, or --file to initialize from an existing TOML config file.
 
 ```
 gc init [path] [flags]
@@ -1261,7 +1260,7 @@ gc nudge status [session]
 
 Manage orders — scheduled or event-driven dispatch of formulas and scripts.
 
-Orders live in flat orders/<name>.toml files. Each order pairs a gate
+Orders live in flat orders/&lt;name&gt;.toml files. Each order pairs a gate
 condition (cooldown, cron, condition, event, or manual) with an action
 (a formula or an exec script). The controller evaluates gates on each
 tick and dispatches work when a gate opens.
@@ -1415,12 +1414,20 @@ gc prime [agent-name] [flags]
 Register a city directory with the machine-wide supervisor.
 
 If no path is given, registers the current city (discovered from cwd).
+Use --name to set the registration name; this also persists workspace.name
+in city.toml so later registrations stay aligned. When --name is omitted,
+workspace.name is used if present, otherwise [pack].name is used and
+backfilled into workspace.name.
 Registration is idempotent — registering the same city twice is a no-op.
 The supervisor is started if needed and immediately reconciles the city.
 
 ```
-gc register [path]
+gc register [path] [flags]
 ```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--name` | string |  | machine-local alias for this city registration |
 
 ## gc restart
 
@@ -1846,8 +1853,9 @@ gc session logs mayor
 
 ## gc session new
 
-Create a new persistent conversation from an agent template defined in
-city.toml. By default, attaches the terminal after creation.
+Create a new persistent conversation from an agent template defined
+in the loaded city configuration. By default, attaches the terminal
+after creation.
 
 When --title-hint is provided without --title, the session title is
 auto-generated from the hint text: a short version is set immediately
@@ -2465,3 +2473,4 @@ Manually mark a wait ready
 ```
 gc wait ready <wait-id>
 ```
+
