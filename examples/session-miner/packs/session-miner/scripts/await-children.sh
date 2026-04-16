@@ -47,7 +47,7 @@ while true; do
   ALL_CLOSED=1
   OPEN_COUNT=0
   for id in "${IDS[@]}"; do
-    STATUS=$(bd show "$id" --json 2>/dev/null | jq -r '.status // "unknown"')
+    STATUS=$(bd show "$id" --json 2>/dev/null | jq -r '.[0].status // "unknown"')
     if [ "${LAST_STATUS[$id]}" != "$STATUS" ]; then
       echo "await-children: $id: ${LAST_STATUS[$id]} -> $STATUS"
       LAST_STATUS["$id"]="$STATUS"

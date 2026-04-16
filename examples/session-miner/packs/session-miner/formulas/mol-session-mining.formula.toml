@@ -193,7 +193,7 @@ explicit perspective files the operator supplied.
 ## Recover paths from root-bead metadata
 
 ```bash
-ROOT_META=$(bd show {{issue}} --json | jq -r '.metadata')
+ROOT_META=$(bd show {{issue}} --json | jq -r '.[0].metadata')
 OUTPUT_DIR=$(echo "$ROOT_META" | jq -r '.output_dir')
 PACK_SCRIPTS=$(echo "$ROOT_META" | jq -r '.pack_scripts')
 CORPUS_MANIFEST=$(echo "$ROOT_META" | jq -r '.corpus_manifest')
@@ -220,7 +220,7 @@ emits `index.json`. Skip to step `human-gate` after this.
 Otherwise create a planner bead and sling it to the pool:
 
 ```bash
-RIG=$(bd show {{issue}} --json | jq -r '.metadata."gc.routed_to"' | cut -d/ -f1)
+RIG=$(bd show {{issue}} --json | jq -r '.[0].metadata."gc.routed_to"' | cut -d/ -f1)
 PLANNER_BEAD=$(bd create "Plan perspectives for mining run" --type task --json | jq -r '.id')
 bd update "$PLANNER_BEAD" \\
   --set-metadata corpus_manifest="$CORPUS_MANIFEST" \\
@@ -229,7 +229,6 @@ bd update "$PLANNER_BEAD" \\
   --set-metadata min_perspectives='{{min_perspectives}}' \\
   --set-metadata max_perspectives='{{max_perspectives}}' \\
   --set-metadata pack_scripts="$PACK_SCRIPTS"
-bd dep add "$PLANNER_BEAD" --blocks {{issue}}
 gc sling "$RIG/perspective_planner" "$PLANNER_BEAD" --nudge
 echo "Dispatched planner as $PLANNER_BEAD. Waiting."
 ```
@@ -238,7 +237,7 @@ Poll until the planner bead closes:
 
 ```bash
 while true; do
-  STATUS=$(bd show "$PLANNER_BEAD" --json | jq -r '.status')
+  STATUS=$(bd show "$PLANNER_BEAD" --json | jq -r '.[0].status')
   if [ "$STATUS" = "closed" ]; then
     break
   fi
@@ -272,7 +271,7 @@ files before the lens pool picks them up.
 ## Recover paths
 
 ```bash
-OUTPUT_DIR=$(bd show {{issue}} --json | jq -r '.metadata.output_dir')
+OUTPUT_DIR=$(bd show {{issue}} --json | jq -r '.[0].metadata.output_dir')
 ```
 
 ## Bypass branch
@@ -289,7 +288,6 @@ GATE_BEAD=$(bd create \\
 Edit or delete any you don't want. When ready to release the lens pool, \\
 close this bead with: bd close <id>" \\
   --json | jq -r '.id')
-bd dep add "$GATE_BEAD" --blocks {{issue}}
 echo "Human gate bead: $GATE_BEAD"
 echo "Operator: review files at $OUTPUT_DIR/perspectives/, then: bd close $GATE_BEAD"
 ```
@@ -299,7 +297,7 @@ is an interactive session the operator may need the reminder.
 
 ```bash
 while true; do
-  STATUS=$(bd show "$GATE_BEAD" --json | jq -r '.status')
+  STATUS=$(bd show "$GATE_BEAD" --json | jq -r '.[0].status')
   [ "$STATUS" = "closed" ] && break
   sleep 15
 done
@@ -332,7 +330,7 @@ description = """
 Create one bead per perspective file and sling each to the lens pool.
 
 ```bash
-ROOT_META=$(bd show {{issue}} --json | jq -r '.metadata')
+ROOT_META=$(bd show {{issue}} --json | jq -r '.[0].metadata')
 OUTPUT_DIR=$(echo "$ROOT_META" | jq -r '.output_dir')
 CORPUS_MANIFEST=$(echo "$ROOT_META" | jq -r '.corpus_manifest')
 PACK_SCRIPTS=$(echo "$ROOT_META" | jq -r '.pack_scripts')
@@ -347,7 +345,6 @@ while IFS= read -r PERSP; do
     --set-metadata corpus_manifest="$CORPUS_MANIFEST" \\
     --set-metadata observations_path="$OUTPUT_DIR/observations/$SLUG.md" \\
     --set-metadata pack_scripts="$PACK_SCRIPTS"
-  bd dep add "$BEAD" --blocks {{issue}}
   gc sling "$RIG/lens" "$BEAD" --nudge
   LENS_BEADS="$LENS_BEADS $BEAD"
 done < "$OUTPUT_DIR/perspectives/final.list"
@@ -369,8 +366,8 @@ description = """
 Poll each lens bead ID in `.lens-beads` until all are closed.
 
 ```bash
-OUTPUT_DIR=$(bd show {{issue}} --json | jq -r '.metadata.output_dir')
-PACK_SCRIPTS=$(bd show {{issue}} --json | jq -r '.metadata.pack_scripts')
+OUTPUT_DIR=$(bd show {{issue}} --json | jq -r '.[0].metadata.output_dir')
+PACK_SCRIPTS=$(bd show {{issue}} --json | jq -r '.[0].metadata.pack_scripts')
 "$PACK_SCRIPTS/await-children.sh" "$OUTPUT_DIR/.lens-beads"
 ```
 
@@ -412,7 +409,7 @@ orchestration to drafting.
 ## Read your authoring brief
 
 ```bash
-ROOT_META=$(bd show {{issue}} --json | jq -r '.metadata')
+ROOT_META=$(bd show {{issue}} --json | jq -r '.[0].metadata')
 OUTPUT_DIR=$(echo "$ROOT_META" | jq -r '.output_dir')
 DRAFTING=$(echo "$ROOT_META" | jq -r '.drafting_instructions')
 OBS_DIR="$OUTPUT_DIR/observations"
@@ -502,7 +499,7 @@ description = """
 Print the final summary and exit.
 
 ```bash
-OUTPUT_DIR=$(bd show {{issue}} --json | jq -r '.metadata.output_dir')
+OUTPUT_DIR=$(bd show {{issue}} --json | jq -r '.[0].metadata.output_dir')
 
 echo "=== session-miner run complete ==="
 echo "Output dir: $OUTPUT_DIR"
