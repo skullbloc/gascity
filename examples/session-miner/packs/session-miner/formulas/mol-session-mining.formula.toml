@@ -3,9 +3,13 @@ Mine a filtered Claude Code session JSONL corpus for draft blog posts.
 
 The pack's miner_coordinator is the one agent that drives this
 formula. It resolves the corpus, dispatches a planner to generate
-perspective files, opens a human gate for review/edit, dispatches
-the lens pool in parallel, waits for everyone to finish, and then
-drafts the posts itself.
+perspective files, writes a REVIEW.md guide, then the dispatch-lenses
+step waits on a `[steps.gate] type = "human"` gate (auto-synthesized
+sibling bead — operator releases by running `bd close` on it). Lens
+pool runs in parallel; coordinator drafts posts when they're done.
+
+With `--var skip_gate=true` the plan step auto-closes the gate bead
+so the run proceeds autonomously.
 
 ## Typical invocation
 
@@ -213,7 +217,7 @@ If `{{skip_planning}}` is `true`:
 That script copies the supplied files into
 `$OUTPUT_DIR/perspectives/`, rewrites their frontmatter
 (`corpus_manifest_sha256`, `generated_at`) to reflect this run, and
-emits `index.json`. Skip to step `human-gate` after this.
+emits `index.json`. Skip to the REVIEW.md section below after this.
 
 ## Default branch: dispatch the planner
 
@@ -255,65 +259,46 @@ if [ ! -s "$OUTPUT_DIR/perspectives/index.json" ]; then
 fi
 ```
 
-Close this step.
-"""
+## Write the REVIEW.md guide
 
-
-# ── STEP 3 — Human gate. ──────────────────────────────────────────────
-[[steps]]
-id = "human-gate"
-title = "Human review of perspective files"
-needs = ["plan-perspectives"]
-description = """
-Give the operator a chance to review, edit, or delete perspective
-files before the lens pool picks them up.
-
-## Recover paths
+Write a short README that the operator will see when they `cd` to
+the perspectives directory. The formula's next step (`dispatch-lenses`)
+has a `[steps.gate]` attached — the compiler auto-created a gate bead
+titled `Gate: human review-perspectives` at cook time. Operator
+releases by closing that bead.
 
 ```bash
-OUTPUT_DIR=$(bd show {{issue}} --json | jq -r '.[0].metadata.output_dir')
+GATE_ID=$(bd list --type gate --status open --json 2>/dev/null \\
+  | jq -r '.[] | select(.title == "Gate: human review-perspectives") | .id' \\
+  | head -1)
+
+cat > "$OUTPUT_DIR/perspectives/REVIEW.md" <<EOF
+# Review perspective files
+
+The planner just wrote the \`*.md\` files in this directory. Before
+the lens pool fires, edit or delete any perspectives you don't want
+kept.
+
+When you're satisfied, release the gate:
+
+    bd close ${GATE_ID:-<gate-bead-id>}
+
+(If the ID above is empty, find it with:
+\`bd list --type gate --status open | grep 'Gate: human review-perspectives'\`)
+EOF
+
+echo "Operator: review files at $OUTPUT_DIR/perspectives/, then release gate $GATE_ID"
 ```
 
-## Bypass branch
+## Handle --var skip_gate=true
 
-If `{{skip_gate}}` is `true`, just close this step — no bead needed.
-
-## Default branch: create the gate bead
-
-```bash
-GATE_BEAD=$(bd create \\
-  "[session-miner] Review perspective files in $OUTPUT_DIR/perspectives/" \\
-  --type task \\
-  --description "Review the perspective files in $OUTPUT_DIR/perspectives/. \\
-Edit or delete any you don't want. When ready to release the lens pool, \\
-close this bead with: bd close <id>" \\
-  --json | jq -r '.id')
-echo "Human gate bead: $GATE_BEAD"
-echo "Operator: review files at $OUTPUT_DIR/perspectives/, then: bd close $GATE_BEAD"
-```
-
-Poll until the gate bead closes. Keep the message visible — if this
-is an interactive session the operator may need the reminder.
+If the operator passed `skip_gate=true`, close the gate bead right
+now so `dispatch-lenses` doesn't block:
 
 ```bash
-while true; do
-  STATUS=$(bd show "$GATE_BEAD" --json | jq -r '.[0].status')
-  [ "$STATUS" = "closed" ] && break
-  sleep 15
-done
-```
-
-After the gate is closed, re-scan the perspectives directory to
-build the authoritative list (operator may have deleted or added
-files):
-
-```bash
-ls "$OUTPUT_DIR/perspectives/"*.md > "$OUTPUT_DIR/perspectives/final.list"
-COUNT=$(wc -l < "$OUTPUT_DIR/perspectives/final.list")
-echo "Gate released; $COUNT perspectives to dispatch."
-if [ "$COUNT" -lt 1 ]; then
-  echo "No perspectives remain after gate. Abort."
-  exit 1
+if [ "{{skip_gate}}" = "true" ] && [ -n "$GATE_ID" ]; then
+  bd close "$GATE_ID" --reason "skip_gate=true at invocation"
+  echo "Auto-closed gate $GATE_ID (skip_gate=true)."
 fi
 ```
 
@@ -321,13 +306,19 @@ Close this step.
 """
 
 
-# ── STEP 4 — Dispatch the lens pool in parallel. ─────────────────────
+# ── STEP 3 — Dispatch the lens pool in parallel. ─────────────────────
+# [steps.gate] below creates a sibling "Gate: human review-perspectives"
+# bead at cook time with a blocks-type dep on this step. The operator
+# closes the gate bead (or plan-perspectives auto-closes it when
+# skip_gate=true) to unblock.
 [[steps]]
 id = "dispatch-lenses"
 title = "Dispatch the lens pool for each perspective"
-needs = ["human-gate"]
+needs = ["plan-perspectives"]
 description = """
-Create one bead per perspective file and sling each to the lens pool.
+Re-scan the perspectives directory and create one bead per perspective
+file, then sling each to the lens pool. The gate has already been
+released at this point.
 
 ```bash
 ROOT_META=$(bd show {{issue}} --json | jq -r '.[0].metadata')
@@ -337,8 +328,12 @@ PACK_SCRIPTS=$(echo "$ROOT_META" | jq -r '.pack_scripts')
 RIG=$(echo "$ROOT_META" | jq -r '."gc.routed_to"' | cut -d/ -f1)
 
 LENS_BEADS=""
-while IFS= read -r PERSP; do
-  SLUG=$(basename "$PERSP" .md)
+for PERSP in "$OUTPUT_DIR/perspectives/"*.md; do
+  [ -e "$PERSP" ] || continue
+  BASE=$(basename "$PERSP" .md)
+  # Skip the REVIEW.md guide — it isn't a perspective.
+  [ "$BASE" = "REVIEW" ] && continue
+  SLUG="$BASE"
   BEAD=$(bd create "Observe from perspective: $SLUG" --type task --json | jq -r '.id')
   bd update "$BEAD" \\
     --set-metadata perspective_path="$PERSP" \\
@@ -347,7 +342,12 @@ while IFS= read -r PERSP; do
     --set-metadata pack_scripts="$PACK_SCRIPTS"
   gc sling "$RIG/lens" "$BEAD" --nudge
   LENS_BEADS="$LENS_BEADS $BEAD"
-done < "$OUTPUT_DIR/perspectives/final.list"
+done
+
+if [ -z "${LENS_BEADS// /}" ]; then
+  echo "No perspectives remain after gate. Abort."
+  exit 1
+fi
 
 echo "$LENS_BEADS" > "$OUTPUT_DIR/.lens-beads"
 echo "Dispatched: $LENS_BEADS"
@@ -356,8 +356,13 @@ echo "Dispatched: $LENS_BEADS"
 Close this step.
 """
 
+[steps.gate]
+type = "human"
+id = "review-perspectives"
+timeout = "24h"
 
-# ── STEP 5 — Wait for all lens beads to close. ────────────────────────
+
+# ── STEP 4 — Wait for all lens beads to close. ────────────────────────
 [[steps]]
 id = "await-lenses"
 title = "Wait for every lens bead to close"
@@ -379,13 +384,15 @@ After all close, sanity-check that every observations file exists
 
 ```bash
 MISSING=0
-while IFS= read -r PERSP; do
-  SLUG=$(basename "$PERSP" .md)
-  if [ ! -s "$OUTPUT_DIR/observations/$SLUG.md" ]; then
-    echo "MISSING: observations/$SLUG.md"
+for PERSP in "$OUTPUT_DIR/perspectives/"*.md; do
+  [ -e "$PERSP" ] || continue
+  BASE=$(basename "$PERSP" .md)
+  [ "$BASE" = "REVIEW" ] && continue
+  if [ ! -s "$OUTPUT_DIR/observations/$BASE.md" ]; then
+    echo "MISSING: observations/$BASE.md"
     MISSING=$((MISSING + 1))
   fi
-done < "$OUTPUT_DIR/perspectives/final.list"
+done
 
 if [ "$MISSING" -gt 0 ]; then
   echo "$MISSING observation files missing. Consider investigating before drafting."
@@ -397,7 +404,7 @@ from whatever observations exist. Close this step.
 """
 
 
-# ── STEP 6 — Draft posts. ─────────────────────────────────────────────
+# ── STEP 5 — Draft posts. ─────────────────────────────────────────────
 [[steps]]
 id = "draft-posts"
 title = "Draft blog-post-style markdown from the observations"
@@ -490,7 +497,7 @@ Close this step when every post file and the index are on disk.
 """
 
 
-# ── STEP 7 — Final report. ────────────────────────────────────────────
+# ── STEP 6 — Final report. ────────────────────────────────────────────
 [[steps]]
 id = "report"
 title = "Report and exit"

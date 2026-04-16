@@ -20,8 +20,13 @@ into draft blog posts.
 1. `resolve-corpus.sh` filters `~/.claude/projects/<slug>/*.jsonl` by
    slug, date, or session UUID into a manifest.
 2. The planner samples the manifest and writes perspective files.
-3. A human gate bead blocks until the operator reviews/edits the
-   perspectives. (`--var skip_gate=true` bypasses.)
+   The step also writes `REVIEW.md` into the perspectives dir with
+   release instructions.
+3. The `dispatch-lenses` step carries a `[steps.gate] type = "human"`
+   attribute. The formula compiler auto-synthesizes a sibling
+   `Gate: human review-perspectives` bead at cook time; `bd close`
+   on that bead releases the step. (`--var skip_gate=true` has the
+   plan step auto-close the gate bead so nothing blocks.)
 4. One lens bead per perspective is dispatched in parallel, up to
    pool size 4.
 5. The coordinator reads all observations and drafts posts,
@@ -78,9 +83,11 @@ gc sling mining/miner_coordinator mol-session-mining --formula \
 
 After the planner closes its bead, open a second terminal and review
 the perspective files at `<rig>/.gc/mined/<slug>/<date>/perspectives/`
-— edit or delete any you want to drop, then close the gate bead:
+— a `REVIEW.md` in that dir has the specific release command. In
+short:
 
 ```bash
+bd list --type gate --status open | grep 'Gate: human review-perspectives'
 bd close <gate-bead-id>
 ```
 

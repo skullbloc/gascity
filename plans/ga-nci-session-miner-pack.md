@@ -287,21 +287,38 @@ of the planner's prompt.
 
 ## Human gate
 
-After the planner closes its bead, the formula creates a review bead
-with metadata `perspectives_dir=<path>`, `nudge_text="Review perspective
-files at <path>, edit or delete any, then close this bead to release."`.
-The formula's next step (dispatch-lenses) `needs = ["human-gate"]` —
-so it blocks until that review bead is closed.
+Uses Gas City's first-class `[steps.gate] type = "human"` DSL
+(`internal/formula/types.go:289-302`, compiled in
+`internal/formula/compile.go:352-395`). Attached to the
+`dispatch-lenses` step:
 
-Two operator paths:
-- Interactive: review the perspective files in the directory, edit or
-  delete as needed, then `bd close <gate-bead>`.
-- Autonomous: pass `--var skip_gate=true` at invocation. Formula makes
-  the gate step a no-op (created-and-closed in one action).
+```toml
+[[steps]]
+id = "dispatch-lenses"
+needs = ["plan-perspectives"]
+description = "..."
 
-The gate step does not lean on agents — it's a direct bead created
-and waited on by the formula's shell step. This avoids any dependency
-on a specific agent being available to render "gate" into UI.
+[steps.gate]
+type = "human"
+id = "review-perspectives"
+timeout = "24h"
+```
+
+At cook time, the formula compiler auto-synthesizes a sibling
+`Gate: human review-perspectives` bead (type=`gate`) with a
+`blocks`-type dep against `dispatch-lenses`. Operator closes via
+plain `bd close`; the engine unblocks the step.
+
+The `plan-perspectives` step writes a `REVIEW.md` into the
+perspectives dir with the specific gate ID and release command, so
+operators who `cd` to review files find instructions where they are.
+
+For `--var skip_gate=true`: `plan-perspectives` looks up the
+auto-created gate bead and closes it preemptively. No blocking
+occurs.
+
+This pack is the first `examples/` user of the `[steps.gate]` DSL —
+only the parser test and tutorial docs referenced it before.
 
 ## Handling context limits
 
