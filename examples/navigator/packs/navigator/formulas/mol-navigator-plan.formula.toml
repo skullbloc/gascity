@@ -1,0 +1,306 @@
+description = """
+Navigator goal-driven investigation/implementation formula. NOT a patrol
+loop — runs once per goal bead, then the navigator exits.
+
+The mayor routes a goal bead to the navigator pool. A navigator instance
+picks it up and works through this formula to plan, dispatch, review,
+and either iterate or complete.
+
+The PairCoder cycle (arXiv 2409.05001):
+  Navigator generates candidate plans → selects best → dispatches to
+  driver pool → reviews results → pivots or continues → outputs when
+  confident.
+
+Formula steps are NOT materialized as child beads. Read the step
+descriptions below and work through them in order. The bead tree
+(sub-beads for driver work) is created during the dispatch step.
+
+On crash/restart, resume from context: read the goal bead's metadata
+(plan.active, plan.confidence, sub-bead statuses) to determine where
+you are in the cycle.
+
+Read each step's description before acting."""
+formula = "mol-navigator-plan"
+version = 1
+
+[vars]
+[vars.confidence_target]
+description = "Default confidence threshold for declaring goal complete (0.0-1.0)"
+default = "0.8"
+
+[vars.max_plans]
+description = "Number of candidate plans to generate"
+default = "3"
+
+[vars.review_timeout]
+description = "Seconds to wait for driver completions before checking"
+default = "60"
+
+[[steps]]
+id = "analyze-goal"
+title = "Analyze the goal and gather existing knowledge"
+description = """
+**1. Read the goal bead thoroughly:**
+```bash
+bd show <goal-bead> --json
+```
+
+Extract from metadata:
+- `goal.context` — domain-specific context from mayor
+- `goal.confidence_target` — when to declare done (default: {{confidence_target}})
+- Any existing plan state from a previous navigator session
+
+**2. Query the wiki for existing knowledge:**
+```bash
+gc mail send wiki -s "QUERY: What do we know about <goal topic>?" -m "$(cat <<'EOF'
+context: Navigator analyzing goal <bead-id>
+- What is currently known about <topic>?
+- What confidence level do existing pages have?
+- What are the known unknowns?
+EOF
+)"
+```
+
+Wait briefly for wiki reply (check mail, ~2 min max). If wiki doesn't
+reply in time, proceed with what you know — wiki is a performance
+optimization, not a hard dependency. Use the goal bead's context and
+any existing sub-bead results to inform your plans.
+
+**3. Check for existing sub-beads from previous attempts:**
+```bash
+bd list --parent <goal> --json
+```
+
+If sub-beads exist from a crashed previous session, assess their status
+and incorporate results from any that completed.
+
+**4. Record initial assessment:**
+```bash
+bd update <goal> --set-metadata plan.phase="analyze"
+bd update <goal> --set-metadata plan.knowledge_gaps="<what we don't know>"
+```
+
+Exit criteria: Goal understood, existing knowledge gathered, gaps identified."""
+
+[[steps]]
+id = "generate-plans"
+title = "Generate multiple candidate plans"
+needs = ["analyze-goal"]
+description = """
+**Config: max_plans = {{max_plans}}**
+
+Generate {{max_plans}} distinct candidate plans for achieving the goal.
+Each plan should represent a meaningfully different approach, not minor
+variations.
+
+**For each candidate plan, consider:**
+- What investigation/implementation approach?
+- What tools/methods will drivers use?
+- What are the expected outputs?
+- What could go wrong? (risk assessment)
+- How would we know if this approach is failing?
+
+**Record plans on the goal bead:**
+```bash
+bd update <goal> --set-metadata plan.candidates="$(cat <<'EOF'
+Plan A: <approach description>
+  Strengths: <why this might work>
+  Risks: <what could go wrong>
+  Pivot signal: <how we know to abandon this>
+
+Plan B: <approach description>
+  Strengths: ...
+  Risks: ...
+  Pivot signal: ...
+
+Plan C: <approach description>
+  ...
+EOF
+)"
+```
+
+**Select the most promising plan:**
+Consider risk, expected information gain, and alignment with existing
+knowledge. Record selection:
+```bash
+bd update <goal> --set-metadata plan.active="Plan A: <description>"
+bd update <goal> --set-metadata plan.backup="Plan B: <description>"
+bd update <goal> --set-metadata plan.phase="dispatch"
+```
+
+Exit criteria: Multiple plans generated, best plan selected, backup ready."""
+
+[[steps]]
+id = "dispatch-work"
+title = "Create sub-beads and dispatch to driver pool"
+needs = ["generate-plans"]
+description = """
+Break the selected plan into concrete sub-tasks. Create child beads
+under the goal and route them to the driver pool.
+
+**For each sub-task:**
+```bash
+SUB=$(bd create "<specific task title>" \
+  -t task --parent <goal> --json | jq -r '.id')
+bd update "$SUB" --set-metadata gc.routed_to=<DRIVER_POOL>
+bd update "$SUB" --description "$(cat <<'EOF'
+## Goal
+<what the driver should achieve>
+
+## Approach
+<specific instructions — tools to use, files to examine, methods to try>
+
+## Expected Output
+<what findings to report>
+
+## Report Format
+When done, update this bead's description with:
+- What you found
+- Confidence level (high/medium/low)
+- Any unexpected discoveries
+- Remaining questions
+
+Then close the bead.
+EOF
+)"
+```
+
+**Dispatch order matters.** If some sub-tasks depend on others, note
+the dependency in the description. Independent sub-tasks can be
+dispatched simultaneously (the pool will spawn multiple drivers).
+
+**Track dispatch:**
+```bash
+bd update <goal> --set-metadata plan.dispatched_count="<N>"
+bd update <goal> --set-metadata plan.phase="review"
+```
+
+Exit criteria: All sub-tasks for current plan iteration dispatched to driver pool."""
+
+[[steps]]
+id = "review-results"
+title = "Wait for and review driver results"
+needs = ["dispatch-work"]
+description = """
+**Config: review_timeout = {{review_timeout}}**
+
+Wait for drivers to complete sub-tasks, then review their results.
+
+**1. Wait for completions:**
+```bash
+SEQ=$(gc events --seq)
+gc events --watch --type=bead.closed \
+  --after=$SEQ --timeout {{review_timeout}}s
+```
+
+**2. Check sub-bead status:**
+```bash
+bd list --parent <goal> --json
+```
+
+For each closed sub-bead, read the results:
+```bash
+bd show <sub-bead> --json
+```
+
+**3. Evaluate each result:**
+- Does it answer the question posed?
+- Does it match predictions from the plan?
+- Does it contradict any existing knowledge?
+- What new questions does it raise?
+
+**4. Update confidence:**
+Calculate updated confidence based on:
+- Fraction of sub-tasks completed successfully
+- Quality and consistency of findings
+- Agreement with wiki knowledge
+
+```bash
+bd update <goal> --set-metadata plan.confidence="<new value>"
+```
+
+**5. Push valuable findings to wiki:**
+```bash
+gc mail send wiki -s "INGEST: <finding summary>" -m "$(cat <<'EOF'
+domain: <domain>
+confidence: <level>
+bead: <sub-bead-id>
+
+<synthesized findings from driver results>
+EOF
+)"
+```
+
+**6. If some sub-tasks are still in progress:**
+Wait another cycle. Don't rush to conclusions from partial results
+unless the completed results already provide enough signal.
+
+Exit criteria: All dispatched sub-tasks reviewed (or timed out with partial results)."""
+
+[[steps]]
+id = "iterate-or-complete"
+title = "Decide: iterate with more work, pivot plan, or complete"
+needs = ["review-results"]
+description = """
+**Config: confidence_target = {{confidence_target}}**
+
+Based on the review, decide the next action.
+
+**Option 1: CONTINUE current plan (confidence < target, plan working)**
+Results are positive but incomplete. Create additional sub-tasks:
+- Go back to the dispatch-work step mentally
+- Create new child beads for the next round of investigation
+- Route to driver pool
+- Return to review-results step
+
+```bash
+bd update <goal> --set-metadata plan.iteration="<N+1>"
+# Create more sub-beads and route to drivers
+# Then wait for results again
+```
+
+**Option 2: PIVOT to backup plan (current plan hit dead end)**
+Results indicate the current approach won't reach the confidence target.
+Switch to the backup plan:
+
+```bash
+bd update <goal> --set-metadata plan.active="<backup plan>"
+bd update <goal> --set-metadata plan.pivot_reason="<why current plan failed>"
+bd update <goal> --set-metadata plan.iteration="1"
+# Don't cancel in-progress sub-beads — partial results may help
+# Create new sub-beads for the new plan
+```
+
+**Option 3: COMPLETE (confidence >= target)**
+Confidence has reached the target. Synthesize and produce output:
+
+1. Synthesize all sub-bead findings into a coherent result
+2. Push final synthesis to wiki:
+   ```bash
+   gc mail send wiki -s "INGEST: <goal> — final synthesis" -m "..."
+   ```
+3. If the goal requires a deliverable (e.g., coding bead):
+   ```bash
+   OUTPUT=$(bd create "Requirements: <deliverable>" \
+     -t task --json | jq -r '.id')
+   bd update "$OUTPUT" --description "<synthesized requirements>"
+   bd update "$OUTPUT" --set-metadata gc.routed_to=<target>
+   bd update "$OUTPUT" --set-metadata wiki.refs="<relevant pages>"
+   ```
+4. Close the goal bead:
+   ```bash
+   bd update <goal> --set-metadata plan.phase="complete"
+   bd close <goal>
+   ```
+5. Exit — you're a pool agent. Controller will recycle you.
+
+**Iteration loop:** Steps 3-5 (dispatch → review → decide) repeat until
+either confidence is reached or all plans are exhausted. If all plans fail,
+escalate to mayor:
+```bash
+gc mail send mayor -s "NAV: All plans exhausted for <goal>" -m "..."
+bd close <goal>
+```
+
+Exit criteria: Goal completed and closed, OR escalated to mayor, OR new
+iteration dispatched."""
