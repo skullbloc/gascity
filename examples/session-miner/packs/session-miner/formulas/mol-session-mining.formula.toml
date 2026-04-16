@@ -227,7 +227,8 @@ bd update "$PLANNER_BEAD" \\
   --set-metadata focus='{{focus}}' \\
   --set-metadata perspectives_dir="$OUTPUT_DIR/perspectives" \\
   --set-metadata min_perspectives='{{min_perspectives}}' \\
-  --set-metadata max_perspectives='{{max_perspectives}}'
+  --set-metadata max_perspectives='{{max_perspectives}}' \\
+  --set-metadata pack_scripts="$PACK_SCRIPTS"
 bd dep add "$PLANNER_BEAD" --blocks {{issue}}
 gc sling "$RIG/perspective_planner" "$PLANNER_BEAD" --nudge
 echo "Dispatched planner as $PLANNER_BEAD. Waiting."
@@ -334,6 +335,7 @@ Create one bead per perspective file and sling each to the lens pool.
 ROOT_META=$(bd show {{issue}} --json | jq -r '.metadata')
 OUTPUT_DIR=$(echo "$ROOT_META" | jq -r '.output_dir')
 CORPUS_MANIFEST=$(echo "$ROOT_META" | jq -r '.corpus_manifest')
+PACK_SCRIPTS=$(echo "$ROOT_META" | jq -r '.pack_scripts')
 RIG=$(echo "$ROOT_META" | jq -r '."gc.routed_to"' | cut -d/ -f1)
 
 LENS_BEADS=""
@@ -343,7 +345,8 @@ while IFS= read -r PERSP; do
   bd update "$BEAD" \\
     --set-metadata perspective_path="$PERSP" \\
     --set-metadata corpus_manifest="$CORPUS_MANIFEST" \\
-    --set-metadata observations_path="$OUTPUT_DIR/observations/$SLUG.md"
+    --set-metadata observations_path="$OUTPUT_DIR/observations/$SLUG.md" \\
+    --set-metadata pack_scripts="$PACK_SCRIPTS"
   bd dep add "$BEAD" --blocks {{issue}}
   gc sling "$RIG/lens" "$BEAD" --nudge
   LENS_BEADS="$LENS_BEADS $BEAD"

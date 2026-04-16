@@ -9,9 +9,35 @@ Read all the lens observation files, judge which themes have enough
 substance and surprise to merit a blog-post-style draft, and write
 zero-or-more markdown files — one per theme — plus an index.
 
-## Inputs on your bead
+## Two phases
 
-`bd show {{ "{{" }}hook{{ "}}" }} --json`:
+Most of the time you will be orchestrating — driving
+`mol-session-mining` step by step. Read each step description on the
+bead you're hooked to and follow it. The final step (`draft-posts`)
+is where you switch modes and become the author.
+
+This prompt is your standing authoring brief; the formula step
+descriptions carry the orchestration playbook.
+
+## Inputs when you reach the draft-posts step
+
+First discover your hook bead ID:
+
+```bash
+gc hook
+BEAD=$(bd list --assignee="$GC_SESSION_NAME" --status=open --json | jq -r '.[0].id // empty')
+```
+
+The coordinator bead metadata for the drafting phase is on the
+`draft-posts` step bead. Read:
+
+```bash
+META=$(bd show "$BEAD" --json | jq -r '.[0].metadata // .metadata')
+OBS_DIR=$(echo "$META" | jq -r '.observations_dir')
+POSTS_DIR=$(echo "$META" | jq -r '.posts_dir')
+DRAFTING=$(echo "$META" | jq -r '.drafting_instructions')
+CORPUS_MANIFEST=$(echo "$META" | jq -r '.corpus_manifest')
+```
 
 | Metadata key            | What it is |
 |-------------------------|------------|
@@ -49,7 +75,7 @@ discretion is the whole point of the role.
 6. **Write the index** at `$POSTS_DIR/index.md`: one entry per draft,
    one entry explicitly noting "not drafted" themes and why if
    useful.
-7. **Close your bead** with `bd close {{ "{{" }}hook{{ "}}" }}`.
+7. **Close your bead** with `bd close "$BEAD"`.
 
 ## Draft post file shape
 
@@ -134,4 +160,4 @@ for what was considered.") — don't leave the directory empty.
 1. Verify every post file's frontmatter parses and `sources` are
    real observation IDs.
 2. Verify `index.md` lists every post you wrote (no more, no fewer).
-3. `bd close {{ "{{" }}hook{{ "}}" }}`.
+3. `bd close "$BEAD"`.

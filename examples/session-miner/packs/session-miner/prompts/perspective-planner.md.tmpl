@@ -10,7 +10,28 @@ grounded in what THIS corpus actually contains.
 
 ## Inputs on your bead
 
-Read your bead's metadata with `bd show {{ "{{" }}hook{{ "}}" }} --json`:
+First discover your hook bead ID:
+
+```bash
+gc hook                                 # human-readable status
+BEAD=$(bd list --assignee="$GC_SESSION_NAME" --status=open --json | jq -r '.[0].id // empty')
+if [ -z "$BEAD" ]; then
+  echo "No open bead on hook — nothing to plan. Exiting."
+  exit 0
+fi
+```
+
+Then read the metadata:
+
+```bash
+META=$(bd show "$BEAD" --json | jq -r '.[0].metadata // .metadata')
+CORPUS_MANIFEST=$(echo "$META" | jq -r '.corpus_manifest')
+FOCUS=$(echo "$META" | jq -r '.focus // ""')
+PERSPECTIVES_DIR=$(echo "$META" | jq -r '.perspectives_dir')
+MIN=$(echo "$META" | jq -r '.min_perspectives // "3"')
+MAX=$(echo "$META" | jq -r '.max_perspectives // "5"')
+PACK_SCRIPTS=$(echo "$META" | jq -r '.pack_scripts')
+```
 
 | Metadata key         | What it is |
 |----------------------|------------|
@@ -19,6 +40,7 @@ Read your bead's metadata with `bd show {{ "{{" }}hook{{ "}}" }} --json`:
 | `perspectives_dir`   | Absolute path to the directory where you will write your perspective files and `index.json`. |
 | `min_perspectives`   | Minimum you must produce (default 3). |
 | `max_perspectives`   | Cap (default 5). |
+| `pack_scripts`       | Absolute path to the pack's `scripts/` directory. Use this to invoke sampler helpers. |
 
 ## What a perspective is
 
@@ -41,24 +63,24 @@ in your perspective.
    - Huge corpus with an outlier session (> 20MB): first + last 200
      lines of every session, plus a middle 200-line sample of the
      outlier.
-   - Tool-heavy corpora: use `scripts/jsonl-tool-uses-only.sh` to
-     pre-filter to tool_use blocks.
-   Use `scripts/jsonl-sample.sh` and `scripts/jsonl-by-timestamp.sh`
-   from the pack's scripts directory; they live at
-   `$(dirname "$PERSPECTIVES_DIR")/../scripts/` or look them up with
-   `gc pack path session-miner` if available.
+   - Tool-heavy corpora: use `$PACK_SCRIPTS/jsonl-tool-uses-only.sh`
+     to pre-filter to tool_use blocks.
+   Helpers available at `$PACK_SCRIPTS/`:
+   - `jsonl-by-timestamp.sh <manifest.json>` — emit paths in order.
+   - `jsonl-sample.sh <file> <n>` — first/middle/last N line sample
+     with line-number prefixes.
+   - `jsonl-tool-uses-only.sh <file>` — emit tool_use lines only.
 3. **Identify 3–5 non-overlapping angles** that look load-bearing FOR
    THIS CORPUS. "Non-overlapping" is load-bearing — two perspectives
    that would mostly produce the same observations are one
    perspective, not two.
 4. **If you're struggling to reach 3 distinct angles**, consult the
-   example perspective files at
-   `$(dirname "$PERSPECTIVES_DIR")/../perspectives/examples/` (or the
-   pack's `perspectives/examples/` directory). These are STARTER
-   SHAPES. Adapt them to what you saw in this corpus. Do not copy them
-   verbatim. If none of the examples fit, fall back to the three
-   primitives: chronological/methodology, taxonomic/distribution,
-   relational/cross-session — but justify each against the corpus.
+   example perspective files at `$(dirname "$PACK_SCRIPTS")/perspectives/examples/`.
+   These are STARTER SHAPES. Adapt them to what you saw in this
+   corpus. Do not copy them verbatim. If none of the examples fit,
+   fall back to the three primitives: chronological/methodology,
+   taxonomic/distribution, relational/cross-session — but justify
+   each against the corpus.
 5. **Write each perspective as a markdown file** at
    `$PERSPECTIVES_DIR/<slug>.md`. Slug is lowercase kebab-case, chosen
    to be short and memorable (e.g., `methodology-pivots`,
@@ -73,8 +95,8 @@ in your perspective.
      ]
    }
    ```
-7. **Close your bead** with `bd close {{ "{{" }}hook{{ "}}" }}` — that's the signal the
-   formula polls for.
+7. **Close your bead** with `bd close "$BEAD"` — that's the signal
+   the formula polls for.
 
 ## Perspective file shape
 
@@ -160,4 +182,4 @@ patterns are worth calling out when present:
 1. Verify every perspective file parses (frontmatter + required
    sections present).
 2. Verify `index.json` lists every file you wrote and nothing else.
-3. `bd close {{ "{{" }}hook{{ "}}" }}`.
+3. `bd close "$BEAD"`.

@@ -21,7 +21,7 @@ scope = "rig"
 prompt_template = "prompts/perspective-planner.md.tmpl"
 nudge = "Check your hook for a planning job."
 overlay_dir = "overlays/default"
-idle_timeout = "30m"
+idle_timeout = "1h"
 min_active_sessions = 0
 max_active_sessions = 1
 
@@ -32,18 +32,23 @@ scope = "rig"
 prompt_template = "prompts/lens.md.tmpl"
 nudge = "Check your hook for a lens job."
 overlay_dir = "overlays/default"
-idle_timeout = "30m"
+idle_timeout = "2h"
 min_active_sessions = 0
 max_active_sessions = 4
 
 # ── MINER COORDINATOR — singleton author. Rig-scoped. ──────────────────
+# The coordinator drives the full mol-session-mining formula end-to-end
+# (resolve -> plan -> gate -> dispatch lenses -> await -> draft). The
+# human gate and lens pool waits can both stretch beyond an hour,
+# especially on large corpora. A generous idle_timeout reduces the
+# risk of the controller killing the coordinator mid-flight.
 [[agent]]
 name = "miner_coordinator"
 scope = "rig"
 prompt_template = "prompts/coordinator.md.tmpl"
 nudge = "Check your hook for a coordination job."
 overlay_dir = "overlays/default"
-idle_timeout = "1h"
+idle_timeout = "6h"
 min_active_sessions = 0
 max_active_sessions = 1
 

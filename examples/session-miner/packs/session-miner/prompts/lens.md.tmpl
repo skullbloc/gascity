@@ -12,13 +12,33 @@ from that angle — with citations back to session + line.
 
 ## Inputs on your bead
 
-`bd show {{ "{{" }}hook{{ "}}" }} --json`:
+First discover your hook bead ID:
+
+```bash
+gc hook
+BEAD=$(bd list --assignee="$GC_SESSION_NAME" --status=open --json | jq -r '.[0].id // empty')
+if [ -z "$BEAD" ]; then
+  echo "No open bead on hook — nothing to observe. Exiting."
+  exit 0
+fi
+```
+
+Then read the metadata:
+
+```bash
+META=$(bd show "$BEAD" --json | jq -r '.[0].metadata // .metadata')
+PERSPECTIVE_PATH=$(echo "$META" | jq -r '.perspective_path')
+CORPUS_MANIFEST=$(echo "$META" | jq -r '.corpus_manifest')
+OBSERVATIONS_PATH=$(echo "$META" | jq -r '.observations_path')
+PACK_SCRIPTS=$(echo "$META" | jq -r '.pack_scripts')
+```
 
 | Metadata key         | What it is |
 |----------------------|------------|
 | `perspective_path`   | Absolute path to a perspective markdown file. This is your working brief. Read it first. |
 | `corpus_manifest`    | Absolute path to `corpus-manifest.json`. Lists every JSONL file in scope. |
-| `observations_path`  | Absolute path where you write your output. The file name's slug matches your perspective's slug. |
+| `observations_path`  | Absolute path where you write your output. File's slug matches your perspective's slug. |
+| `pack_scripts`       | Absolute path to the pack's `scripts/` directory. Use the sampler helpers there. |
 
 ## The bias that distinguishes this pack from a summarizer
 
@@ -41,16 +61,15 @@ corpus would already convey, cut it.
 2. **Read the corpus manifest** at `$CORPUS_MANIFEST` to understand
    shape. If your perspective has partitioning guidance (e.g.,
    time-ordered, two-pass, by line offset), follow it.
-3. **Process the corpus** using helper scripts at
-   `$(dirname "$OBSERVATIONS_PATH")/../../scripts/` or the pack's
-   `scripts/` dir:
-   - `scripts/jsonl-by-timestamp.sh` — sort sessions by first-line
-     timestamp.
-   - `scripts/jsonl-tool-uses-only.sh <file>` — emits only tool_use
-     lines from a session (for tool-churn / methodology angles).
-   - `scripts/jsonl-sample.sh <file> <n>` — random-sample N lines.
-   - If your perspective is tool-heavy or pivot-heavy, pre-filter
-     with the tool-use helper before reading full content.
+3. **Process the corpus** using helper scripts at `$PACK_SCRIPTS/`:
+   - `jsonl-by-timestamp.sh <manifest.json>` — emit paths in
+     ascending timestamp order.
+   - `jsonl-tool-uses-only.sh <file>` — emit only tool_use lines
+     from a session (for tool-churn / methodology angles).
+   - `jsonl-sample.sh <file> <n>` — first/middle/last sample with
+     line-number prefixes.
+   If your perspective is tool-heavy or pivot-heavy, pre-filter
+   with the tool-use helper before reading full content.
 4. **Handle context limits.** If the corpus (or a single session) is
    too large for one session:
    - Dispatch subagents to process partitions and hand back
@@ -62,7 +81,7 @@ corpus would already convey, cut it.
    MUST carry at least one citation. Minimum acceptable output: 3
    observations. No upper bound, but each one has to clear the
    "surprise over coverage" bar.
-6. **Close your bead** with `bd close {{ "{{" }}hook{{ "}}" }}`.
+6. **Close your bead** with `bd close "$BEAD"`.
 
 ## Output file shape
 
@@ -150,4 +169,4 @@ section may require specific tags — honor those.
 2. Verify every observation has at least one citation in the correct
    format.
 3. Verify observation IDs are contiguous and padded to 3 digits.
-4. `bd close {{ "{{" }}hook{{ "}}" }}`.
+4. `bd close "$BEAD"`.
