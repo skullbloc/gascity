@@ -33,6 +33,7 @@ gc [flags]
 | [gc events](#gc-events) | Show the event log |
 | [gc formula](#gc-formula) | Manage and inspect formulas |
 | [gc graph](#gc-graph) | Show dependency graph for beads |
+| [gc halt](#gc-halt) | Pause the supervisor reconciliation tick |
 | [gc handoff](#gc-handoff) | Send handoff mail and restart this session |
 | [gc help](#gc-help) | Help about any command |
 | [gc hook](#gc-hook) | Check for available work (use --inject for Stop hook output) |
@@ -842,6 +843,24 @@ gc graph gc-42               # expand convoy children
 | `--mermaid` | bool |  | output Mermaid.js flowchart |
 | `--tree` | bool |  | output Unicode dependency tree |
 
+## gc halt
+
+Halt the supervisor reconciliation tick for a city by creating
+a flag file at &lt;city&gt;/.gc/runtime/halt. While the flag is present the
+supervisor loop skips tick work (no session wakes, no convergence,
+no order dispatch) but keeps the process alive, logs, and control
+socket responsive.
+
+This is a soft circuit breaker for emergencies: it stops disk thrash
+from a runaway reconciler without requiring "systemctl stop". The
+supervisor process itself is not killed.
+
+Idempotent. Use "gc resume" to clear the flag.
+
+```
+gc halt [path]
+```
+
 ## gc handoff
 
 Convenience command for context handoff.
@@ -1437,6 +1456,8 @@ gc restart [path]
 ## gc resume
 
 Resume a suspended city by clearing workspace.suspended in city.toml.
+Also clears the halt flag file (if any) created by "gc halt", so this
+is the single verb that takes a city out of every soft-pause state.
 
 Restores normal operation: the reconciler will spawn agents again and
 gc hook/prime will return work. Use "gc agent resume" to resume
@@ -1848,8 +1869,9 @@ gc session logs mayor
 
 ## gc session new
 
-Create a new persistent conversation from an agent template defined in
-city.toml. By default, attaches the terminal after creation.
+Create a new persistent conversation from an agent template defined
+in the loaded city configuration. By default, attaches the terminal
+after creation.
 
 When --title-hint is provided without --title, the session title is
 auto-generated from the hint text: a short version is set immediately
