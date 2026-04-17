@@ -275,16 +275,16 @@ GATE_ID=$(bd list --type gate --status open --json 2>/dev/null \\
 cat > "$OUTPUT_DIR/perspectives/REVIEW.md" <<EOF
 # Review perspective files
 
-The planner just wrote the \`*.md\` files in this directory. Before
-the lens pool fires, edit or delete any perspectives you don't want
-kept.
+The planner just wrote the *.md files in this directory. Before the
+lens pool fires, edit or delete any perspectives you don't want kept.
 
 When you're satisfied, release the gate:
 
     bd close ${GATE_ID:-<gate-bead-id>}
 
-(If the ID above is empty, find it with:
-\`bd list --type gate --status open | grep 'Gate: human review-perspectives'\`)
+If the ID above is empty, find it with:
+
+    bd list --type gate --status open | grep 'Gate: human review-perspectives'
 EOF
 
 echo "Operator: review files at $OUTPUT_DIR/perspectives/, then release gate $GATE_ID"
