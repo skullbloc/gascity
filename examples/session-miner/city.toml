@@ -20,6 +20,16 @@
 name = "session-miner-demo"
 provider = "claude"
 
+# Shared test dolt server — managed by examples/session-miner/scripts/test-dolt.sh.
+# This `[dolt]` section marks the server as external/user-managed so gc won't
+# spawn a per-city dolt. Every test city that sets these to the same port
+# will share one server (with separate databases). Default port is 13307;
+# override via GC_TEST_DOLT_PORT before running test-dolt.sh start, and
+# change the port below to match.
+[dolt]
+host = "127.0.0.1"
+port = 13307
+
 [[rigs]]
 name = "mining"
 # Adjust the path below to point at the git repo where outputs will land.

@@ -70,16 +70,30 @@ Optional vars:
 
 ## Running the demo
 
+Two-step setup: start the shared test dolt, then the test city.
+
 ```bash
-# In this repo, once gc is installed and claude CLI is auth'd:
-cd ~/session-miner-demo             # any git repo
-gc init .
+# 1. Start the shared test dolt server (once per session)
+./scripts/test-dolt.sh start         # listens on 127.0.0.1:13307 by default
+
+# 2. Stand up the test city
+mkdir ~/session-miner-demo && cd ~/session-miner-demo
+git init
 cp <repo>/examples/session-miner/city.toml .
-# Edit city.toml: set [[rigs]] path and includes path relative to .
-gc start .
+# Edit city.toml: set [[rigs]] path and includes path as absolute paths
+# pointing into the session-miner pack. Keep the [dolt] section so gc
+# treats the shared dolt as external.
+gc init .                            # creates .beads/, hooks, etc.
+gc start .                           # supervisor + agents
+bd config set issue_prefix mi        # match the rig-derived prefix to
+                                     # avoid prefix-mismatch on formula cook
+
+# 3. Dispatch
 gc sling mining/miner_coordinator mol-session-mining --formula \
   --var project_slug=-home-admin-workspace-ck3proj
 ```
+
+When done, tear down in reverse: `gc stop .`, `./scripts/test-dolt.sh stop`.
 
 After the planner closes its bead, open a second terminal and review
 the perspective files at `<rig>/.gc/mined/<slug>/<date>/perspectives/`
