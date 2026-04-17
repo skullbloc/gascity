@@ -74,17 +74,83 @@ func TestGraphWorkflowRouteVars(t *testing.T) {
 
 func intPtr(v int) *int { return &v }
 
-func TestApplyGraphRouting_NonGraph(t *testing.T) {
-	// Non-graph recipe should be a no-op.
+func TestApplyGraphRouting_LegacyStampsSteps(t *testing.T) {
+	// Legacy [[steps]] recipe: every step should inherit gc.routed_to from
+	// the wisp root's target so tier-3 work queries can find them.
 	r := &formula.Recipe{
-		Steps: []formula.RecipeStep{{
-			Metadata: map[string]string{"gc.kind": "task"},
-		}},
+		Steps: []formula.RecipeStep{
+			{ID: "dry", Metadata: map[string]string{"gc.kind": "task"}},
+			{ID: "wet", Metadata: map[string]string{"gc.kind": "task"}},
+			{ID: "combine"},
+		},
 	}
 	a := config.Agent{Name: "worker", MaxActiveSessions: intPtr(1)}
-	err := ApplyGraphRouting(r, &a, "worker", nil, "", "", "", "", nil, "city", &config.City{}, Deps{})
+	err := ApplyGraphRouting(r, &a, "myrig/worker", nil, "", "", "", "", nil, "city", &config.City{}, Deps{})
 	if err != nil {
-		t.Fatalf("unexpected error for non-graph recipe: %v", err)
+		t.Fatalf("ApplyGraphRouting: %v", err)
+	}
+	for i, step := range r.Steps {
+		if got := step.Metadata["gc.routed_to"]; got != "myrig/worker" {
+			t.Errorf("step[%d] gc.routed_to = %q, want myrig/worker", i, got)
+		}
+	}
+}
+
+func TestApplyGraphRouting_LegacyPreservesExplicitRoute(t *testing.T) {
+	// A step with a pre-set gc.routed_to must not be overwritten.
+	r := &formula.Recipe{
+		Steps: []formula.RecipeStep{
+			{ID: "default"},
+			{ID: "explicit", Metadata: map[string]string{"gc.routed_to": "other/agent"}},
+		},
+	}
+	err := ApplyGraphRouting(r, nil, "myrig/worker", nil, "", "", "", "", nil, "city", nil, Deps{})
+	if err != nil {
+		t.Fatalf("ApplyGraphRouting: %v", err)
+	}
+	if got := r.Steps[0].Metadata["gc.routed_to"]; got != "myrig/worker" {
+		t.Errorf("default step gc.routed_to = %q, want myrig/worker", got)
+	}
+	if got := r.Steps[1].Metadata["gc.routed_to"]; got != "other/agent" {
+		t.Errorf("explicit step gc.routed_to = %q, want preserved other/agent", got)
+	}
+}
+
+func TestApplyGraphRouting_LegacyEmptyRouteNoOp(t *testing.T) {
+	// Controller probing without a concrete agent target: do not stamp
+	// an empty string on steps.
+	r := &formula.Recipe{
+		Steps: []formula.RecipeStep{
+			{ID: "step", Metadata: map[string]string{"gc.kind": "task"}},
+		},
+	}
+	err := ApplyGraphRouting(r, nil, "", nil, "", "", "", "", nil, "city", nil, Deps{})
+	if err != nil {
+		t.Fatalf("ApplyGraphRouting: %v", err)
+	}
+	if got, ok := r.Steps[0].Metadata["gc.routed_to"]; ok {
+		t.Errorf("gc.routed_to = %q, want unset", got)
+	}
+}
+
+func TestApplyGraphRouting_LegacyNilMetadata(t *testing.T) {
+	// A step with no metadata map should get one created and stamped.
+	r := &formula.Recipe{
+		Steps: []formula.RecipeStep{{ID: "step"}},
+	}
+	err := ApplyGraphRouting(r, nil, "myrig/worker", nil, "", "", "", "", nil, "city", nil, Deps{})
+	if err != nil {
+		t.Fatalf("ApplyGraphRouting: %v", err)
+	}
+	if got := r.Steps[0].Metadata["gc.routed_to"]; got != "myrig/worker" {
+		t.Errorf("gc.routed_to = %q, want myrig/worker", got)
+	}
+}
+
+func TestApplyGraphRouting_NilRecipe(t *testing.T) {
+	// Nil recipe is a no-op (matches existing defensive guard).
+	if err := ApplyGraphRouting(nil, nil, "worker", nil, "", "", "", "", nil, "city", nil, Deps{}); err != nil {
+		t.Fatalf("ApplyGraphRouting(nil) = %v, want nil", err)
 	}
 }
 
