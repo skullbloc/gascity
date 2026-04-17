@@ -440,10 +440,20 @@ func DecorateGraphWorkflowRecipe(recipe *formula.Recipe, routeVars map[string]st
 	return nil
 }
 
-// ApplyGraphRouting decorates a compiled recipe with routing metadata if it
-// is a graph.v2 workflow. No-op for non-graph recipes.
+// ApplyGraphRouting decorates a compiled recipe with routing metadata. For
+// graph.v2 workflows, per-step bindings are resolved via the graph routing
+// logic. For legacy [[steps]] formulas, all steps inherit gc.routed_to from
+// the wisp root so step beads are discoverable by `bd ready
+// --metadata-field gc.routed_to=<target>` and counted toward pool
+// scale_check demand.
 func ApplyGraphRouting(recipe *formula.Recipe, a *config.Agent, routedTo string, vars map[string]string, sourceBeadID, scopeKind, scopeRef, storeRef string, store beads.Store, cityName string, cfg *config.City, deps Deps) error {
-	if !IsCompiledGraphWorkflow(recipe) || cfg == nil {
+	if recipe == nil {
+		return nil
+	}
+	if !IsCompiledGraphWorkflow(recipe) {
+		return applyLegacyRouting(recipe, routedTo)
+	}
+	if cfg == nil {
 		return nil
 	}
 
@@ -475,4 +485,27 @@ func ApplyGraphRouting(recipe *formula.Recipe, a *config.Agent, routedTo string,
 	}
 	routeVars := GraphWorkflowRouteVars(recipe, vars)
 	return DecorateGraphWorkflowRecipe(recipe, routeVars, sourceBeadID, scopeKind, scopeRef, storeRef, routedTo, sessionName, store, cityName, cfg, deps)
+}
+
+// applyLegacyRouting stamps gc.routed_to on every step of a legacy [[steps]]
+// recipe so step beads are discoverable via tier-3 work queries and counted
+// toward pool scale_check demand. Legacy formulas have no per-step agent
+// bindings; all steps inherit the wisp root's routing target. Preserves any
+// explicit per-step gc.routed_to already present. No-op when routedTo is
+// empty (e.g. controller probing without an agent target).
+func applyLegacyRouting(recipe *formula.Recipe, routedTo string) error {
+	routedTo = strings.TrimSpace(routedTo)
+	if routedTo == "" {
+		return nil
+	}
+	for i := range recipe.Steps {
+		if recipe.Steps[i].Metadata == nil {
+			recipe.Steps[i].Metadata = make(map[string]string)
+		}
+		if existing := strings.TrimSpace(recipe.Steps[i].Metadata["gc.routed_to"]); existing != "" {
+			continue
+		}
+		recipe.Steps[i].Metadata["gc.routed_to"] = routedTo
+	}
+	return nil
 }

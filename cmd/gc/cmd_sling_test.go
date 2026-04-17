@@ -2182,7 +2182,7 @@ func TestBatchAutoBurnStaleMolecules(t *testing.T) {
 	}
 }
 
-func TestOnFormulaPoolAttachmentLeavesLegacyStepsUnrouted(t *testing.T) {
+func TestOnFormulaPoolAttachmentRoutesLegacySteps(t *testing.T) {
 	dir := testFormulaDir(t)
 	content := `
 formula = "multi-step"
@@ -2255,8 +2255,8 @@ needs = ["prep"]
 		if bead.ParentID == "BL-42" {
 			t.Fatalf("internal bead %s ParentID = %q, want not outer bead", bead.ID, bead.ParentID)
 		}
-		if bead.Metadata["gc.routed_to"] != "" {
-			t.Fatalf("internal bead %s gc.routed_to = %q, want empty", bead.ID, bead.Metadata["gc.routed_to"])
+		if bead.Type == "task" && bead.Metadata["gc.routed_to"] != a.QualifiedName() {
+			t.Fatalf("internal task bead %s gc.routed_to = %q, want %q (legacy step beads must inherit wisp root routing per issue #796)", bead.ID, bead.Metadata["gc.routed_to"], a.QualifiedName())
 		}
 	}
 }
