@@ -439,8 +439,10 @@ func cmdInitFromTOMLFileWithOptions(fs fsys.FS, tomlSrc, cityPath, nameOverride 
 		return 1
 	}
 
-	// --file creates a new city from a template; default to target dir name.
-	cityName := resolveCityName(nameOverride, cityPath)
+	// --file creates a new city from a template. Preserve the source
+	// TOML's workspace.name when set; --name still overrides; the
+	// target basename is the last-resort fallback (issue #795).
+	cityName := resolveCityName(nameOverride, cfg.Workspace.Name, cityPath)
 	cfg.Workspace.Name = cityName
 
 	// Create directory structure.
@@ -541,7 +543,7 @@ func doInit(fs fsys.FS, cityPath string, wiz wizardConfig, nameOverride string, 
 				return code
 			}
 		}
-		cityName := resolveCityName(nameOverride, cityPath)
+		cityName := resolveCityName(nameOverride, "", cityPath)
 		fmt.Fprintln(stdout, "Welcome to Gas City!")                              //nolint:errcheck // best-effort stdout
 		fmt.Fprintf(stdout, "Bootstrapped city %q runtime scaffold.\n", cityName) //nolint:errcheck // best-effort stdout
 		return 0
@@ -565,8 +567,9 @@ func doInit(fs fsys.FS, cityPath string, wiz wizardConfig, nameOverride string, 
 
 	// Build the initial city shape before writing prompt scaffolds so init
 	// only creates convention-discoverable prompt files for the agents the
-	// chosen city template actually declares.
-	cityName := resolveCityName(nameOverride, cityPath)
+	// chosen city template actually declares. Bare init has no source
+	// config; sourceName is "".
+	cityName := resolveCityName(nameOverride, "", cityPath)
 	var cfg config.City
 	switch {
 	case wiz.configName == "custom":
@@ -732,10 +735,16 @@ func overrideCityName(f fsys.FS, tomlPath, name string, stderr io.Writer) int {
 }
 
 // resolveCityName returns the workspace name to use during init.
-// Priority: explicit --name flag > target directory basename.
-func resolveCityName(nameOverride, cityPath string) string {
+// Priority: explicit --name flag > source config's workspace.name >
+// target directory basename. Pass sourceName="" when no source config
+// is involved (bare init); in that case the target basename is used
+// whenever --name is absent (issue #795).
+func resolveCityName(nameOverride, sourceName, cityPath string) string {
 	if nameOverride != "" {
 		return nameOverride
+	}
+	if sourceName != "" {
+		return sourceName
 	}
 	return filepath.Base(cityPath)
 }
@@ -811,7 +820,12 @@ func doInitFromDirWithOptions(srcDir, cityPath, nameOverride string, stdout, std
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	cityName := resolveCityName(nameOverride, cityPath)
+	// --from intentionally defaults the name to the target basename —
+	// pass sourceName="" to preserve that behavior, per upstream
+	// b54cc70c ("preserve default semantics"). Issue #795 is scoped to
+	// --file; see cmdInitFromTOMLFileWithOptions for the preservation
+	// change.
+	cityName := resolveCityName(nameOverride, "", cityPath)
 	cfg.Workspace.Name = cityName
 	content, err := cfg.Marshal()
 	if err != nil {
