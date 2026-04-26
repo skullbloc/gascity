@@ -1,0 +1,98 @@
+{{ define "re-tools" }}
+## RE Tool Reference
+
+These tools are available for reverse engineering investigations.
+All paths are relative to the rig root unless otherwise noted.
+
+### Ghidra (Static Analysis)
+
+Ghidra project: `{{ .Env.GHIDRA_PROJECT }}`
+
+**Headless analysis scripts:**
+```bash
+# Run a Ghidra script against the CK3 binary
+analyzeHeadless {{ .Env.GHIDRA_PROJECT }} ck3 \
+  -process ck3.exe \
+  -scriptPath {{ .Env.RE_TOOLS_DIR }}/ghidra \
+  -postScript <script_name>.py [args...]
+
+# Common scripts:
+#   decompile_function.py <address>    — decompile a single function
+#   find_xrefs.py <address>            — find all cross-references to address
+#   dump_struct.py <address> <size>     — dump memory layout as struct
+#   search_strings.py <pattern>         — search string table
+#   list_functions.py <prefix>          — list functions matching prefix
+#   trace_vtable.py <class_name>        — dump vtable for a class
+```
+
+**Reading Ghidra output:**
+- Decompiled output is C-like pseudocode — types may be wrong
+- Cross-reference counts indicate how important a function is
+- String references often reveal enum values and debug messages
+
+### Runtime Probes
+
+**Breakpoint-based probing:**
+```bash
+# Attach to running CK3 process and set breakpoints
+{{ .Env.RE_TOOLS_DIR }}/probe.sh attach <pid>
+{{ .Env.RE_TOOLS_DIR }}/probe.sh break <address> [condition]
+{{ .Env.RE_TOOLS_DIR }}/probe.sh watch <address> <size>    # memory watchpoint
+{{ .Env.RE_TOOLS_DIR }}/probe.sh trace <address> --log     # log calls without stopping
+```
+
+**Memory inspection:**
+```bash
+# Dump memory regions
+{{ .Env.RE_TOOLS_DIR }}/probe.sh dump <address> <length> [format]
+# Formats: hex, struct, string, float, int32, int64
+
+# Scan for patterns in process memory
+{{ .Env.RE_TOOLS_DIR }}/probe.sh scan <pattern> [region]
+```
+
+### Coredump Analysis
+
+**Differential coredump comparison:**
+```bash
+# Take a snapshot of process memory
+{{ .Env.RE_TOOLS_DIR }}/coredump.sh snapshot <pid> <label>
+
+# Compare two snapshots to find what changed
+{{ .Env.RE_TOOLS_DIR }}/coredump.sh diff <label_a> <label_b> [region]
+
+# Extract struct at address from a coredump
+{{ .Env.RE_TOOLS_DIR }}/coredump.sh extract <dump_file> <address> <size>
+```
+
+**Differential analysis workflow:**
+1. Take snapshot before an in-game action
+2. Perform the action (e.g., declare war, change law)
+3. Take snapshot after
+4. Diff the snapshots to find changed memory regions
+5. Cross-reference changed addresses with Ghidra symbols
+
+### MCP Bridge
+
+The MCP bridge provides structured access to RE tool output:
+```bash
+# Query the MCP bridge for cached analysis results
+{{ .Env.RE_TOOLS_DIR }}/mcp-query.sh <query_type> [args...]
+
+# Query types:
+#   function <address>     — cached decompilation + metadata
+#   struct <name>          — known struct definition
+#   xrefs <address>        — cached cross-references
+#   strings <pattern>      — string search results
+#   offset <name>          — named offset lookup
+```
+
+### Best Practices
+
+- **Always check the wiki first** — someone may have already analyzed the target
+- **Record offsets as both hex and decimal** — wiki entries should have both
+- **Note the binary version** — offsets shift between patches
+- **Use differential analysis** for game-state structures (cheaper than full static analysis)
+- **Ghidra decompilation is a starting point** — verify with runtime probes
+- **Save probe scripts** — repeatable probes are more valuable than one-shot results
+{{ end }}
