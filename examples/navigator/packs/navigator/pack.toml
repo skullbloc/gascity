@@ -1,0 +1,40 @@
+# PairCoder — Navigator/Driver investigation orchestration pack.
+#
+# Adds a navigator agent pool that implements the PairCoder pattern
+# (arXiv 2409.05001): navigator plans, selects strategies, dispatches
+# to a configurable driver pool, reviews results, and pivots or continues.
+#
+# Generic — not project-specific. Configure via Env overrides in city.toml:
+#   PAIRCODER_DRIVER_POOL     — which agent pool executes work (default: polecat)
+#   PAIRCODER_DRIVER_FORMULA  — which formula drivers follow (default: mol-polecat-work)
+#
+# Goal-driven: mayor hooks a goal bead to a navigator instance. The bead
+# carries the goal description, domain context, and completion criteria.
+# Navigator runs the PairCoder cycle until confident, then produces output.
+#
+# Composable with any other pack. No agent name collisions with gastown,
+# maintenance, or wiki packs.
+
+[pack]
+name = "navigator"
+schema = 1
+
+[formulas]
+dir = "formulas"
+
+# ── NAVIGATOR — Investigation/implementation planner. Pool. ──────────
+[[agent]]
+name = "navigator"
+scope = "rig"
+wake_mode = "fresh"
+work_dir = ".gc/agents/{{.Rig}}/navigators/{{.AgentBase}}"
+prompt_template = "prompts/navigator.md.tmpl"
+nudge = "Check your hook for goal assignments, then act accordingly."
+overlay_dir = "overlays/default"
+idle_timeout = "2h"
+min_active_sessions = 0
+max_active_sessions = 3
+
+[agent.env]
+PAIRCODER_DRIVER_POOL = "polecat"
+PAIRCODER_DRIVER_FORMULA = "mol-polecat-work"
