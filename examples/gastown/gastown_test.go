@@ -6,6 +6,7 @@
 package gastown_test
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -669,6 +670,153 @@ func TestWorktreeSetupSyncSkipsMissingOrigin(t *testing.T) {
 
 	if got := runCmd(t, tmp, "git", "-C", worktree, "rev-parse", "--is-inside-work-tree"); got != "true" {
 		t.Fatalf("worktree sync did not preserve git worktree, got %q", got)
+	}
+}
+
+// runShCaptureStderr runs `sh args...` and returns its stderr. Unlike
+// runCmd, this isolates stderr so tests can assert on warning messages
+// emitted by the script without picking up stdout noise.
+func runShCaptureStderr(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("sh", args...)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("sh %s: %v\nstdout:\n%s\nstderr:\n%s",
+			strings.Join(args, " "), err, stdout.String(), stderr.String())
+	}
+	return strings.TrimSpace(stderr.String())
+}
+
+// setupRigWithOrigin builds a rig repo with origin pointing at a bare
+// upstream, plus a helper checkout the test can use to push commits to
+// upstream so the rig's local main becomes stale relative to origin/main.
+// Returns (rigRoot, helperRoot).
+func setupRigWithOrigin(t *testing.T, tmp string) (string, string) {
+	t.Helper()
+	upstream := filepath.Join(tmp, "upstream.git")
+	rig := filepath.Join(tmp, "rig")
+	helper := filepath.Join(tmp, "helper")
+
+	runCmd(t, tmp, "git", "-c", "init.defaultBranch=main", "init", "--bare", upstream)
+
+	runCmd(t, tmp, "git", "-c", "init.defaultBranch=main", "init", rig)
+	runCmd(t, rig, "git", "config", "user.email", "test@example.com")
+	runCmd(t, rig, "git", "config", "user.name", "Gastown Test")
+	if err := os.WriteFile(filepath.Join(rig, "README.md"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatalf("writing rig README: %v", err)
+	}
+	runCmd(t, rig, "git", "add", ".")
+	runCmd(t, rig, "git", "commit", "-m", "v1")
+	runCmd(t, rig, "git", "remote", "add", "origin", upstream)
+	runCmd(t, rig, "git", "push", "-u", "origin", "main")
+	runCmd(t, rig, "git", "remote", "set-head", "origin", "main")
+
+	runCmd(t, tmp, "git", "clone", "-b", "main", upstream, helper)
+	runCmd(t, helper, "git", "config", "user.email", "test@example.com")
+	runCmd(t, helper, "git", "config", "user.name", "Gastown Test")
+
+	return rig, helper
+}
+
+// advanceUpstream pushes a new commit from helper so that origin/main moves
+// ahead of the rig's local main.
+func advanceUpstream(t *testing.T, helper string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(helper, "NEW.md"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatalf("writing helper NEW.md: %v", err)
+	}
+	runCmd(t, helper, "git", "add", ".")
+	runCmd(t, helper, "git", "commit", "-m", "v2")
+	runCmd(t, helper, "git", "push", "origin", "main")
+}
+
+func TestWorktreeSetupSyncFastForwardsRigMainBeforeNewWorktree(t *testing.T) {
+	tmp := t.TempDir()
+	rig, helper := setupRigWithOrigin(t, tmp)
+	advanceUpstream(t, helper)
+
+	script := filepath.Join(exampleDir(), "packs", "gastown", "assets", "scripts", "worktree-setup.sh")
+	rigBefore := runCmd(t, tmp, "git", "-C", rig, "rev-parse", "HEAD")
+
+	worktree := filepath.Join(tmp, "city", ".gc", "worktrees", filepath.Base(rig), "polecat-a")
+	runCmd(t, tmp, "sh", script, rig, worktree, "polecat-a", "--sync")
+
+	rigAfter := runCmd(t, tmp, "git", "-C", rig, "rev-parse", "HEAD")
+	if rigBefore == rigAfter {
+		t.Fatalf("rig main was not fast-forwarded; HEAD unchanged at %s", rigBefore)
+	}
+	originMain := runCmd(t, tmp, "git", "-C", rig, "rev-parse", "origin/main")
+	if rigAfter != originMain {
+		t.Fatalf("rig main = %s, want origin/main = %s", rigAfter, originMain)
+	}
+
+	if _, err := os.Stat(filepath.Join(worktree, "NEW.md")); err != nil {
+		t.Fatalf("new worktree missing NEW.md (did not branch from updated rig main): %v", err)
+	}
+}
+
+func TestWorktreeSetupSyncSkipsRigFastForwardWhenDirty(t *testing.T) {
+	tmp := t.TempDir()
+	rig, helper := setupRigWithOrigin(t, tmp)
+	advanceUpstream(t, helper)
+
+	if err := os.WriteFile(filepath.Join(rig, "README.md"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("dirtying rig README: %v", err)
+	}
+
+	script := filepath.Join(exampleDir(), "packs", "gastown", "assets", "scripts", "worktree-setup.sh")
+	rigBefore := runCmd(t, tmp, "git", "-C", rig, "rev-parse", "HEAD")
+
+	worktree := filepath.Join(tmp, "city", ".gc", "worktrees", filepath.Base(rig), "polecat-a")
+	stderr := runShCaptureStderr(t, tmp, script, rig, worktree, "polecat-a", "--sync")
+
+	rigAfter := runCmd(t, tmp, "git", "-C", rig, "rev-parse", "HEAD")
+	if rigBefore != rigAfter {
+		t.Fatalf("rig main moved while dirty; HEAD %s -> %s", rigBefore, rigAfter)
+	}
+
+	dirty, err := os.ReadFile(filepath.Join(rig, "README.md"))
+	if err != nil {
+		t.Fatalf("reading dirty README: %v", err)
+	}
+	if string(dirty) != "dirty\n" {
+		t.Fatalf("dirty README clobbered, got %q", string(dirty))
+	}
+
+	if !strings.Contains(stderr, "skipping rig fast-forward") ||
+		!strings.Contains(stderr, "uncommitted changes") {
+		t.Fatalf("expected dirty-rig warning on stderr, got:\n%s", stderr)
+	}
+}
+
+func TestWorktreeSetupSyncSkipsRigFastForwardWhenOffDefaultBranch(t *testing.T) {
+	tmp := t.TempDir()
+	rig, helper := setupRigWithOrigin(t, tmp)
+	advanceUpstream(t, helper)
+
+	runCmd(t, rig, "git", "checkout", "-b", "feature/test")
+
+	script := filepath.Join(exampleDir(), "packs", "gastown", "assets", "scripts", "worktree-setup.sh")
+	rigMainBefore := runCmd(t, tmp, "git", "-C", rig, "rev-parse", "main")
+
+	worktree := filepath.Join(tmp, "city", ".gc", "worktrees", filepath.Base(rig), "polecat-a")
+	stderr := runShCaptureStderr(t, tmp, script, rig, worktree, "polecat-a", "--sync")
+
+	rigMainAfter := runCmd(t, tmp, "git", "-C", rig, "rev-parse", "main")
+	if rigMainBefore != rigMainAfter {
+		t.Fatalf("rig main moved while off default branch; %s -> %s", rigMainBefore, rigMainAfter)
+	}
+
+	if got := runCmd(t, tmp, "git", "-C", rig, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature/test" {
+		t.Fatalf("rig HEAD = %q, want feature/test", got)
+	}
+
+	if !strings.Contains(stderr, "skipping rig fast-forward") ||
+		!strings.Contains(stderr, "feature/test") {
+		t.Fatalf("expected off-default-branch warning on stderr, got:\n%s", stderr)
 	}
 }
 

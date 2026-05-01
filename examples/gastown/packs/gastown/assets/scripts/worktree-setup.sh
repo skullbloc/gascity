@@ -72,6 +72,32 @@ sync_worktree() {
     git -C "$WT" pull --rebase 2>/dev/null || true
 }
 
+# fetch_main_ff fast-forwards the rig repo's default branch from origin
+# before a new worktree is created, so the new worktree inherits the latest
+# upstream tip instead of a stale local HEAD. Conservative: only runs with
+# --sync, only when origin exists, and only when the rig is on its default
+# branch and clean. Logs a warning to stderr otherwise.
+fetch_main_ff() {
+    [ "$SYNC" = "--sync" ] || return 0
+    if ! git -C "$RIG_ROOT" remote get-url origin >/dev/null 2>&1; then
+        return 0
+    fi
+    git -C "$RIG_ROOT" fetch origin 2>/dev/null || true
+    DEFAULT_REF=$(git -C "$RIG_ROOT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null) || DEFAULT_REF=""
+    DEFAULT="${DEFAULT_REF#origin/}"
+    DEFAULT="${DEFAULT:-main}"
+    CURBR=$(git -C "$RIG_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null) || CURBR=""
+    if [ "$CURBR" != "$DEFAULT" ]; then
+        echo "worktree-setup: skipping rig fast-forward (rig $RIG_ROOT is on '$CURBR', not '$DEFAULT')" >&2
+        return 0
+    fi
+    if [ -n "$(git -C "$RIG_ROOT" status --porcelain 2>/dev/null || true)" ]; then
+        echo "worktree-setup: skipping rig fast-forward (rig $RIG_ROOT has uncommitted changes)" >&2
+        return 0
+    fi
+    git -C "$RIG_ROOT" merge --ff-only "origin/$DEFAULT" 2>/dev/null || true
+}
+
 branch_name() {
     # Namescape worktree branches by target path so multiple cities or rigs
     # can share one underlying repo without colliding on global refs like
@@ -131,6 +157,10 @@ fi
 rmdir "$WT" 2>/dev/null || true
 # Clear stale metadata from removed worktrees before branch/worktree lookup.
 git -C "$RIG_ROOT" worktree prune >/dev/null 2>&1 || true
+
+# Refresh the rig's default branch from origin so the new worktree starts
+# from the latest tip, not a stale local HEAD.
+fetch_main_ff
 
 BRANCH=$(branch_name)
 if git -C "$RIG_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
