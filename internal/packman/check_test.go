@@ -349,6 +349,7 @@ func assertSingleIssue(t *testing.T, report *CheckReport, code string) {
 	t.Helper()
 	if report == nil {
 		t.Fatal("report is nil")
+		return
 	}
 	if len(report.Issues) != 1 {
 		t.Fatalf("len(Issues) = %d, want 1: %#v", len(report.Issues), report.Issues)

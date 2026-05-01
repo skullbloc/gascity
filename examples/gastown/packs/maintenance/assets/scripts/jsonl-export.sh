@@ -135,7 +135,14 @@ git commit -q -m "backup $(date -u +%Y-%m-%dT%H:%M:%SZ): exported=$EXPORTED_DBS/
     --author="Gas Town Daemon <daemon@gastown.local>" 2>/dev/null || true
 
 PUSH_STATUS="ok"
-if ! git push origin main -q 2>/dev/null; then
+if [ -z "$(git remote 2>/dev/null)" ]; then
+    # No offsite remote configured — local-only archive mode. The commit above
+    # is durable in the local archive repo; there's nothing to push.
+    PUSH_STATUS="local-only"
+    if [ -f "$STATE_FILE" ]; then
+        echo '{"consecutive_push_failures": 0}' > "$STATE_FILE"
+    fi
+elif ! git push origin main -q 2>/dev/null; then
     PUSH_STATUS="failed"
 
     # Track consecutive failures.

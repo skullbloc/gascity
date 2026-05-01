@@ -1049,6 +1049,7 @@ func TestExpandedCityUsesGastownDogOverride(t *testing.T) {
 	}
 	if dog == nil {
 		t.Fatal("expected explicit dog agent in expanded gastown config")
+		return
 	}
 	if dog.WorkDir != ".gc/agents/dogs/{{.AgentBase}}" {
 		t.Errorf("dog work_dir = %q, want gastown themed work dir", dog.WorkDir)

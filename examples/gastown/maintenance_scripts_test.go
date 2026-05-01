@@ -640,6 +640,126 @@ func writeManagedRuntimeStateWithPID(t *testing.T, cityDir string, port int, pid
 	}
 }
 
+func TestJSONLExportLocalOnlyWhenArchiveRepoHasNoRemote(t *testing.T) {
+	cityDir := t.TempDir()
+	binDir := t.TempDir()
+	stateDir := t.TempDir()
+	archiveDir := filepath.Join(t.TempDir(), "archive")
+	doltLog := filepath.Join(t.TempDir(), "dolt-args.log")
+	gcLog := filepath.Join(t.TempDir(), "gc.log")
+
+	writeMaintenanceDoltStub(t, filepath.Join(binDir, "dolt"))
+	writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
+printf '%s\n' "$*" >> "$GC_CALL_LOG"
+exit 0
+`)
+
+	env := map[string]string{
+		"DOLT_ARGS_LOG":              doltLog,
+		"GC_CALL_LOG":                gcLog,
+		"GC_CITY":                    cityDir,
+		"GC_CITY_PATH":               cityDir,
+		"GC_PACK_STATE_DIR":          stateDir,
+		"GC_JSONL_ARCHIVE_REPO":      archiveDir,
+		"GC_JSONL_MAX_PUSH_FAILURES": "1",
+		"GC_DOLT_HOST":               "127.0.0.1",
+		"GC_DOLT_PORT":               "3307",
+		"GC_DOLT_USER":               "root",
+		"GC_DOLT_PASSWORD":           "",
+		"GIT_CONFIG_GLOBAL":          filepath.Join(t.TempDir(), "gitconfig"),
+		"GIT_CONFIG_NOSYSTEM":        "1",
+		"PATH":                       binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}
+
+	runScript(t, filepath.Join(exampleDir(), "packs", "maintenance", "assets", "scripts", "jsonl-export.sh"), env)
+
+	gcData, err := os.ReadFile(gcLog)
+	if err != nil {
+		t.Fatalf("ReadFile(gc log): %v", err)
+	}
+	gcCalls := string(gcData)
+	if strings.Contains(gcCalls, "JSONL push failed") {
+		t.Fatalf("script escalated push failure with no remote configured:\n%s", gcCalls)
+	}
+	if !strings.Contains(gcCalls, "push: local-only") {
+		t.Fatalf("expected DOG_DONE summary to report push: local-only:\n%s", gcCalls)
+	}
+
+	stateFile := filepath.Join(stateDir, "jsonl-export-state.json")
+	if data, err := os.ReadFile(stateFile); err == nil {
+		var state map[string]int
+		if err := json.Unmarshal(data, &state); err != nil {
+			t.Fatalf("Unmarshal(state): %v\n%s", err, data)
+		}
+		if got := state["consecutive_push_failures"]; got != 0 {
+			t.Fatalf("consecutive_push_failures = %d, want 0\nstate: %s", got, data)
+		}
+	}
+}
+
+func TestJSONLExportEscalatesPushFailureWhenRemoteConfigured(t *testing.T) {
+	cityDir := t.TempDir()
+	binDir := t.TempDir()
+	stateDir := t.TempDir()
+	archiveDir := filepath.Join(t.TempDir(), "archive")
+	doltLog := filepath.Join(t.TempDir(), "dolt-args.log")
+	gcLog := filepath.Join(t.TempDir(), "gc.log")
+
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(archive): %v", err)
+	}
+	gitInit := exec.Command("git", "init", "-q", archiveDir)
+	gitInit.Env = mergeTestEnv(map[string]string{
+		"GIT_CONFIG_GLOBAL":   filepath.Join(t.TempDir(), "gitconfig"),
+		"GIT_CONFIG_NOSYSTEM": "1",
+	})
+	if out, err := gitInit.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	gitRemote := exec.Command("git", "-C", archiveDir, "remote", "add", "origin", "/nonexistent/remote.git")
+	gitRemote.Env = mergeTestEnv(map[string]string{
+		"GIT_CONFIG_GLOBAL":   filepath.Join(t.TempDir(), "gitconfig"),
+		"GIT_CONFIG_NOSYSTEM": "1",
+	})
+	if out, err := gitRemote.CombinedOutput(); err != nil {
+		t.Fatalf("git remote add: %v\n%s", err, out)
+	}
+
+	writeMaintenanceDoltStub(t, filepath.Join(binDir, "dolt"))
+	writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
+printf '%s\n' "$*" >> "$GC_CALL_LOG"
+exit 0
+`)
+
+	env := map[string]string{
+		"DOLT_ARGS_LOG":              doltLog,
+		"GC_CALL_LOG":                gcLog,
+		"GC_CITY":                    cityDir,
+		"GC_CITY_PATH":               cityDir,
+		"GC_PACK_STATE_DIR":          stateDir,
+		"GC_JSONL_ARCHIVE_REPO":      archiveDir,
+		"GC_JSONL_MAX_PUSH_FAILURES": "1",
+		"GC_DOLT_HOST":               "127.0.0.1",
+		"GC_DOLT_PORT":               "3307",
+		"GC_DOLT_USER":               "root",
+		"GC_DOLT_PASSWORD":           "",
+		"GIT_CONFIG_GLOBAL":          filepath.Join(t.TempDir(), "gitconfig"),
+		"GIT_CONFIG_NOSYSTEM":        "1",
+		"PATH":                       binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}
+
+	runScript(t, filepath.Join(exampleDir(), "packs", "maintenance", "assets", "scripts", "jsonl-export.sh"), env)
+
+	gcData, err := os.ReadFile(gcLog)
+	if err != nil {
+		t.Fatalf("ReadFile(gc log): %v", err)
+	}
+	gcCalls := string(gcData)
+	if !strings.Contains(gcCalls, "JSONL push failed") {
+		t.Fatalf("expected escalation when push to configured remote fails:\n%s", gcCalls)
+	}
+}
+
 func TestFormulaDoltSQLExamplesUseExplicitTarget(t *testing.T) {
 	examplesDir := filepath.Dir(exampleDir())
 	paths := []string{
