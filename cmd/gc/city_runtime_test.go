@@ -1484,6 +1484,7 @@ func TestCityRuntimeBuildDesiredState_StandaloneIncludesRigStores(t *testing.T) 
 
 func TestCityRuntimeReloadProviderSwapPreservesDrainTracker(t *testing.T) {
 	cityPath := t.TempDir()
+	addTestSpawnedDoltCleanup(t, cityPath)
 	tomlPath := filepath.Join(cityPath, "city.toml")
 	writeCityRuntimeConfig(t, tomlPath, "fake")
 
@@ -1529,6 +1530,7 @@ func TestCityRuntimeReloadProviderSwapPreservesDrainTracker(t *testing.T) {
 
 func TestCityRuntimeReloadProviderSwapFailsOnPartialSessionListing(t *testing.T) {
 	cityPath := t.TempDir()
+	addTestSpawnedDoltCleanup(t, cityPath)
 	tomlPath := filepath.Join(cityPath, "city.toml")
 	writeCityRuntimeConfig(t, tomlPath, "fake")
 
@@ -1579,6 +1581,7 @@ func TestCityRuntimeReloadProviderSwapFailsOnPartialSessionListing(t *testing.T)
 
 func TestCityRuntimeReloadProviderSwapFailsOnSessionListingError(t *testing.T) {
 	cityPath := t.TempDir()
+	addTestSpawnedDoltCleanup(t, cityPath)
 	tomlPath := filepath.Join(cityPath, "city.toml")
 	writeCityRuntimeConfig(t, tomlPath, "fake")
 
@@ -1629,6 +1632,7 @@ func TestCityRuntimeReloadProviderSwapFailsOnSessionListingError(t *testing.T) {
 
 func TestCityRuntimeReloadAllowsRegistryAliasDifferentFromWorkspaceName(t *testing.T) {
 	cityPath := t.TempDir()
+	addTestSpawnedDoltCleanup(t, cityPath)
 	tomlPath := filepath.Join(cityPath, "city.toml")
 	writeCityRuntimeConfigNamed(t, tomlPath, "workspace-name", "fake")
 
@@ -1673,6 +1677,7 @@ func TestCityRuntimeReloadAllowsRegistryAliasDifferentFromWorkspaceName(t *testi
 
 func TestCityRuntimeReloadLifecycleFailureKeepsOldConfig(t *testing.T) {
 	cityPath := t.TempDir()
+	addTestSpawnedDoltCleanup(t, cityPath)
 	tomlPath := filepath.Join(cityPath, "city.toml")
 	writeCityRuntimeConfig(t, tomlPath, "fake")
 
@@ -1758,6 +1763,7 @@ func TestCityRuntimeReloadLifecycleFailureKeepsOldConfig(t *testing.T) {
 
 func TestCityRuntimeReloadRetriesTransientLifecycleFailure(t *testing.T) {
 	cityPath := t.TempDir()
+	addTestSpawnedDoltCleanup(t, cityPath)
 	tomlPath := filepath.Join(cityPath, "city.toml")
 	writeCityRuntimeConfig(t, tomlPath, "fake")
 
@@ -1850,6 +1856,7 @@ func TestCityRuntimeReloadStrictWarningsReturnedOnFailure(t *testing.T) {
 	t.Cleanup(func() { strictMode = oldStrict })
 
 	cityPath := t.TempDir()
+	addTestSpawnedDoltCleanup(t, cityPath)
 	tomlPath := filepath.Join(cityPath, "city.toml")
 	writeCityRuntimeConfig(t, tomlPath, "fake")
 
@@ -1925,6 +1932,7 @@ func TestCityRuntimeReloadNonStrictWarningsReturnedOnValidationFailure(t *testin
 	t.Cleanup(func() { strictMode = oldStrict })
 
 	cityPath := t.TempDir()
+	addTestSpawnedDoltCleanup(t, cityPath)
 	tomlPath := filepath.Join(cityPath, "city.toml")
 	writeCityRuntimeConfig(t, tomlPath, "fake")
 
@@ -2053,6 +2061,7 @@ func TestCityRuntimeHandleReloadRequestInitializesConfigDirty(t *testing.T) {
 
 func TestCityRuntimeReloadSameRevisionIsNoOp(t *testing.T) {
 	cityPath := t.TempDir()
+	addTestSpawnedDoltCleanup(t, cityPath)
 	tomlPath := filepath.Join(cityPath, "city.toml")
 	writeCityRuntimeConfig(t, tomlPath, "fake")
 
@@ -2137,6 +2146,7 @@ func TestNewCityRuntimeUsesRegisteredAliasForEffectiveIdentity(t *testing.T) {
 
 func TestCityRuntimeReloadKeepsRegisteredAliasForEffectiveIdentity(t *testing.T) {
 	cityPath := t.TempDir()
+	addTestSpawnedDoltCleanup(t, cityPath)
 	tomlPath := filepath.Join(cityPath, "city.toml")
 	writeCityRuntimeConfigNamed(t, tomlPath, "declared-city", "fake")
 
@@ -2250,6 +2260,7 @@ func TestCityRuntimeReloadRestartsConfigWatcherWithNewPackTargets(t *testing.T) 
 	t.Cleanup(func() { debounceDelay = old })
 
 	cityPath := t.TempDir()
+	addTestSpawnedDoltCleanup(t, cityPath)
 	tomlPath := filepath.Join(cityPath, "city.toml")
 	writeCityRuntimeConfigWithIncludes(t, tomlPath, nil)
 

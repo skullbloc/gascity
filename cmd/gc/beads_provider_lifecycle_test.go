@@ -2204,6 +2204,18 @@ func TestInitBeadsForDirExecPreventsStrayGitInit(t *testing.T) {
 	bdPath := findRealBD()
 
 	rawDir := t.TempDir()
+	cityDir := t.TempDir()
+	writeMinimalCityToml(t, cityDir)
+	rigDir := filepath.Join(cityDir, "frontend")
+	if err := os.MkdirAll(rigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Each `bd init --server` below detaches a managed dolt sql-server
+	// child whose PID is recorded in <scope>/.beads/dolt-server.pid.
+	// Without explicit cleanup the children survive test exit and
+	// accumulate as zombies that the deacon's patrol must reap.
+	addTestSpawnedDoltCleanup(t, rawDir, rigDir)
+
 	rawCmd := exec.Command(bdPath, "init", "--quiet", "--server", "--prefix", "raw", "--skip-hooks", "--skip-agents", ".")
 	rawCmd.Dir = rawDir
 	rawCmd.Env = sanitizedBaseEnv()
@@ -2218,13 +2230,6 @@ func TestInitBeadsForDirExecPreventsStrayGitInit(t *testing.T) {
 		t.Log("direct bd init created .git without BEADS_DIR")
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("stat direct bd init .git: %v", err)
-	}
-
-	cityDir := t.TempDir()
-	writeMinimalCityToml(t, cityDir)
-	rigDir := filepath.Join(cityDir, "frontend")
-	if err := os.MkdirAll(rigDir, 0o755); err != nil {
-		t.Fatal(err)
 	}
 
 	script := filepath.Join(t.TempDir(), "provider.sh")
