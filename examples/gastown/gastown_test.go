@@ -201,6 +201,83 @@ func TestPolecatFormulaRecordsExistingPRMetadataOnSubmit(t *testing.T) {
 	}
 }
 
+// TestPolecatHandoffUsesCanonicalRefineryAlias verifies the polecat→refinery
+// handoff sites use the canonical V2 qualified name `<rig>/gastown.refinery`
+// rather than the short form `<rig>/refinery`. The refinery's own queue
+// query uses $GC_ALIAS which resolves to the canonical form, so a short-form
+// handoff misroutes work and the refinery never sees the bead.
+//
+// Regression test for ga-3grxv.
+func TestPolecatHandoffUsesCanonicalRefineryAlias(t *testing.T) {
+	dir := exampleDir()
+	cases := []struct {
+		path      string
+		canonical string
+		short     string
+	}{
+		{
+			path:      filepath.Join(dir, "packs", "gastown", "agents", "polecat", "prompt.template.md"),
+			canonical: `--assignee={{ .RigName }}/gastown.refinery --set-metadata gc.routed_to={{ .RigName }}/gastown.refinery`,
+			short:     `--assignee={{ .RigName }}/refinery --set-metadata gc.routed_to={{ .RigName }}/refinery`,
+		},
+		{
+			path:      filepath.Join(dir, "packs", "gastown", "template-fragments", "approval-fallacy.template.md"),
+			canonical: `--assignee={{ .RigName }}/gastown.refinery --set-metadata gc.routed_to={{ .RigName }}/gastown.refinery`,
+			short:     `--assignee={{ .RigName }}/refinery --set-metadata gc.routed_to={{ .RigName }}/refinery`,
+		},
+		{
+			path:      filepath.Join(dir, "packs", "gastown", "formulas", "mol-polecat-work.toml"),
+			canonical: `--assignee=<rig>/gastown.refinery --set-metadata gc.routed_to=<rig>/gastown.refinery`,
+			short:     `--assignee=<rig>/refinery --set-metadata gc.routed_to=<rig>/refinery`,
+		},
+	}
+	for _, tc := range cases {
+		data, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", tc.path, err)
+		}
+		body := string(data)
+		if !strings.Contains(body, tc.canonical) {
+			t.Errorf("%s: missing canonical refinery handoff %q", filepath.Base(tc.path), tc.canonical)
+		}
+		if strings.Contains(body, tc.short) {
+			t.Errorf("%s: contains short-form refinery handoff %q (must use canonical %q)", filepath.Base(tc.path), tc.short, tc.canonical)
+		}
+	}
+}
+
+// TestWitnessPatrolUsesCanonicalRefineryAlias verifies the witness patrol's
+// refinery queue checks use the canonical V2 qualified name. The polecat
+// hands off work using the canonical form, so witness queries that use the
+// short form would miss those beads and report a false-empty queue.
+//
+// Regression test for ga-3grxv (prevents witness observability regression).
+func TestWitnessPatrolUsesCanonicalRefineryAlias(t *testing.T) {
+	dir := exampleDir()
+	path := filepath.Join(dir, "packs", "gastown", "formulas", "mol-witness-patrol.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading witness patrol formula: %v", err)
+	}
+	body := string(data)
+	for _, want := range []string{
+		`gc bd list --assignee=<rig>/gastown.refinery --status=open --json`,
+		`gc nudge <rig>/gastown.refinery "Work beads waiting for merge. Please check queue."`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("witness patrol formula missing canonical refinery alias %q", want)
+		}
+	}
+	for _, bad := range []string{
+		`--assignee=<rig>/refinery `,
+		`gc nudge <rig>/refinery "`,
+	} {
+		if strings.Contains(body, bad) {
+			t.Errorf("witness patrol formula contains short-form refinery alias %q", bad)
+		}
+	}
+}
+
 func TestRefineryFormulaRespectsExistingPRMetadata(t *testing.T) {
 	dir := exampleDir()
 	path := filepath.Join(dir, "packs", "gastown", "formulas", "mol-refinery-patrol.toml")

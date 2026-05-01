@@ -300,8 +300,8 @@ func TestGastown_PolecatImplementsRefineryMerges(t *testing.T) {
 		originMain := gitCmd(t, rigDir, "log", "--oneline", "-5", "origin/main")
 		status, _ := c.GC("status")
 		outerFinal, _ := bdCmd(testEnvC, rigDir, "show", outerID, "--json")
-		refineryAssigned, _ := bdCmd(testEnvC, rigDir, "list", "--assignee=repo/refinery", "--json", "--limit=20")
-		refineryInProgress, _ := bdCmd(testEnvC, rigDir, "list", "--status=in_progress", "--assignee=repo/refinery", "--json", "--limit=20")
+		refineryAssigned, _ := bdCmd(testEnvC, rigDir, "list", "--assignee=repo/gastown.refinery", "--json", "--limit=20")
+		refineryInProgress, _ := bdCmd(testEnvC, rigDir, "list", "--status=in_progress", "--assignee=repo/gastown.refinery", "--json", "--limit=20")
 		sessionDiag := gatherSessionDiagnostics(t, c, c.Dir, "mayor", "repo/witness", "repo/refinery", "repo/polecat")
 		t.Fatalf("feature.txt was not merged to origin/main within %s\nbranches:\n%s\ngit log:\n%s\norigin/main:\n%s\nstatus:\n%s",
 			deadline, branches, gitLog, originMain, status+

@@ -30,9 +30,11 @@ gc [flags]
 | [gc convoy](#gc-convoy) | Manage convoys — graphs of related work |
 | [gc dashboard](#gc-dashboard) | Web dashboard for monitoring the supervisor and managed cities |
 | [gc doctor](#gc-doctor) | Check workspace health |
+| [gc dolt](#gc-dolt) | Commands from the dolt import |
 | [gc event](#gc-event) | Event operations |
 | [gc events](#gc-events) | Show events from the GC API |
 | [gc formula](#gc-formula) | Manage and inspect formulas |
+| [gc gastown](#gc-gastown) | Commands from the gastown import |
 | [gc graph](#gc-graph) | Show dependency graph for beads |
 | [gc handoff](#gc-handoff) | Send handoff mail and restart controller-managed sessions |
 | [gc help](#gc-help) | Help about any command |
@@ -910,6 +912,116 @@ gc doctor
 | `--fix` | bool |  | attempt to fix issues automatically |
 | `-v`, `--verbose` | bool |  | show extra diagnostic details |
 
+## gc dolt
+
+Commands from the dolt import
+
+```
+gc dolt
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| [gc dolt cleanup](#gc-dolt-cleanup) | Find and remove orphaned Dolt databases |
+| [gc dolt gc-nudge](#gc-dolt-gc-nudge) | Size-triggered CALL DOLT_GC() to compact a bloated Dolt database |
+| [gc dolt health](#gc-dolt-health) | Check Dolt data-plane health |
+| [gc dolt list](#gc-dolt-list) | List Dolt databases |
+| [gc dolt logs](#gc-dolt-logs) | Tail the Dolt server log file |
+| [gc dolt recover](#gc-dolt-recover) | Recover Dolt from read-only state |
+| [gc dolt rollback](#gc-dolt-rollback) | List or restore from migration backups |
+| [gc dolt sql](#gc-dolt-sql) | Open an interactive Dolt SQL shell |
+| [gc dolt start](#gc-dolt-start) | Start the Dolt server if not already running |
+| [gc dolt status](#gc-dolt-status) | Check if the Dolt server is running |
+| [gc dolt sync](#gc-dolt-sync) | Push databases to configured remotes |
+
+## gc dolt cleanup
+
+Find and remove orphaned Dolt databases
+
+```
+gc dolt cleanup
+```
+
+## gc dolt gc-nudge
+
+Size-triggered CALL DOLT_GC() to compact a bloated Dolt database
+
+```
+gc dolt gc-nudge
+```
+
+## gc dolt health
+
+Check Dolt data-plane health
+
+```
+gc dolt health
+```
+
+## gc dolt list
+
+List Dolt databases
+
+```
+gc dolt list
+```
+
+## gc dolt logs
+
+Tail the Dolt server log file
+
+```
+gc dolt logs
+```
+
+## gc dolt recover
+
+Recover Dolt from read-only state
+
+```
+gc dolt recover
+```
+
+## gc dolt rollback
+
+List or restore from migration backups
+
+```
+gc dolt rollback
+```
+
+## gc dolt sql
+
+Open an interactive Dolt SQL shell
+
+```
+gc dolt sql
+```
+
+## gc dolt start
+
+Start the Dolt server if not already running
+
+```
+gc dolt start
+```
+
+## gc dolt status
+
+Check if the Dolt server is running
+
+```
+gc dolt status
+```
+
+## gc dolt sync
+
+Push databases to configured remotes
+
+```
+gc dolt sync
+```
+
 ## gc event
 
 Event operations
@@ -1047,6 +1159,35 @@ gc formula show <formula-name> [flags]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--var` | stringArray |  | variable substitution for preview (key=value) |
+
+## gc gastown
+
+Commands from the gastown import
+
+```
+gc gastown
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| [gc gastown status](#gc-gastown-status) |  |
+
+## gc gastown status
+
+Show a high-level overview of the gastown orchestration state.
+
+Displays agent sessions, active molecules, and recent events.
+Useful for quick health checks during development.
+
+Environment variables set by gc:
+  GC_CITY_PATH   Absolute path to the city root
+  GC_PACK_DIR    Absolute path to this pack's directory
+  GC_PACK_NAME   Pack name ("gastown")
+  GC_CITY_NAME   City workspace name
+
+```
+gc gastown status
+```
 
 ## gc graph
 
