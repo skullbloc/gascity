@@ -260,6 +260,39 @@ if [ "${GC_HEALTH_SKIP_ZOMBIE_SCAN:-0}" != "1" ]; then
     [ -n "$rig_pid" ] && rig_dolt_pids="$rig_dolt_pids $rig_pid "
   done < "$_meta_cache"
 
+  # Foreign-workspace exclusion: a dolt sql-server whose --config flag
+  # points outside every registered city tree belongs to another
+  # workspace and is not our zombie. Without this filter, deacon
+  # patrol trips on sister-workspace Dolt servers (e.g. an unrelated
+  # checkout under /home/admin/bright-lights running its own Dolt
+  # while the registered city is /home/admin/gc/bright-lights) and
+  # tries to kill foreign PIDs every cycle.
+  #
+  # Always include $GC_CITY_PATH so the same-vs-foreign comparison
+  # works even when `gc cities list` is unavailable (gc itself wedged,
+  # supervisor down, or the script invoked outside a registered city).
+  city_paths_canon=$(canonical_path "$GC_CITY_PATH")
+  if command -v gc >/dev/null 2>&1; then
+    # Bound the gc invocation: gc could itself be in a bad state — same
+    # defensive posture as metadata_files() above.
+    cities_out=$(run_bounded 5 gc cities list 2>/dev/null || true)
+    while IFS= read -r _line; do
+      case "$_line" in
+        ''|NAME*) continue ;;
+      esac
+      # `gc cities list` is tabwriter output: NAME column(s) then PATH.
+      # PATH is the last whitespace-delimited field; skip non-absolute
+      # values defensively.
+      cp=$(printf '%s\n' "$_line" | awk '{print $NF}')
+      case "$cp" in /*) ;; *) continue ;; esac
+      cp_canon=$(canonical_path "$cp")
+      city_paths_canon="$city_paths_canon
+$cp_canon"
+    done <<EOF
+$cities_out
+EOF
+  fi
+
   for p in $(pgrep -x dolt 2>/dev/null || true); do
     [ "$p" = "$server_pid" ] && continue
     case "$rig_dolt_pids" in *" $p "*) continue ;; esac
@@ -268,6 +301,33 @@ if [ "${GC_HEALTH_SKIP_ZOMBIE_SCAN:-0}" != "1" ]; then
       *sql-server*) ;;
       *) continue ;;
     esac
+    # Parse the --config path from argv. Pure parameter-expansion to
+    # avoid spawning another sed/awk per candidate. Both `--config=PATH`
+    # and `--config PATH` forms are used in practice.
+    config_path=""
+    case "$cmd" in
+      *"--config="*)
+        rest=${cmd#*--config=}
+        config_path=${rest%% *}
+        ;;
+      *"--config "*)
+        rest=${cmd#*--config }
+        config_path=${rest%% *}
+        ;;
+    esac
+    if [ -n "$config_path" ]; then
+      config_canon=$(canonical_path "$config_path")
+      is_foreign=true
+      while IFS= read -r _cp; do
+        [ -z "$_cp" ] && continue
+        case "$config_canon" in
+          "$_cp"|"$_cp"/*) is_foreign=false; break ;;
+        esac
+      done <<EOF
+$city_paths_canon
+EOF
+      [ "$is_foreign" = true ] && continue
+    fi
     zombie_count=$((zombie_count + 1))
     zombie_pids="$zombie_pids $p"
   done

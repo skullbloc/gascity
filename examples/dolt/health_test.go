@@ -884,3 +884,150 @@ func TestHealthScriptJSONAlwaysExitsZero(t *testing.T) {
 		t.Errorf("JSON payload missing expected `\"reachable\": false`; got:\n%s", out)
 	}
 }
+
+// TestHealthScriptZombieScanExcludesForeignWorkspaceServers verifies
+// that a Dolt sql-server whose --config flag points outside every
+// registered city tree is not flagged as a zombie. Regression guard
+// for the bug where deacon patrol tripped on sister-workspace Dolt
+// servers (e.g. /home/admin/bright-lights running its own Dolt while
+// the registered city was /home/admin/gc/bright-lights).
+//
+// A "true zombie" — a stale dolt sql-server whose --config IS inside
+// the registered city tree — must still be flagged. Foreign filtering
+// must not regress same-city zombie detection.
+func TestHealthScriptZombieScanExcludesForeignWorkspaceServers(t *testing.T) {
+	cityPath := t.TempDir()
+	foreignPath := t.TempDir()
+	fakeBin := t.TempDir()
+
+	mainPort := "19911"
+
+	mainPID := "424301"
+	foreignPID := "424302"
+	zombiePID := "424303"
+
+	// City .beads directory with metadata so metadata_files() has a target.
+	if err := os.MkdirAll(filepath.Join(cityPath, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, ".beads", "metadata.json"),
+		[]byte(`{"dolt_database":"city"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Foreign workspace setup — a sibling tree with its own dolt config,
+	// representing an unregistered workspace's Dolt server. The path
+	// only needs to exist for the test; the script keys off the
+	// substring inside --config, not directory contents.
+	foreignConfig := filepath.Join(foreignPath, ".gc", "runtime", "packs", "dolt", "dolt-config.yaml")
+	if err := os.MkdirAll(filepath.Dir(foreignConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(foreignConfig, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same-city zombie config — a stale dolt sql-server from THIS
+	// city. Must still be flagged as zombie after the foreign filter.
+	zombieConfig := filepath.Join(cityPath, ".gc", "runtime", "packs", "dolt", "dolt-config.yaml")
+	if err := os.MkdirAll(filepath.Dir(zombieConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(zombieConfig, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fake gc: handles `cities list` (returning only this city) and
+	// fails for everything else, so metadata_files() falls back to
+	// find. Mirrors the real `gc cities list` tabwriter format
+	// (header line "NAME\tPATH" then one row per registered city).
+	writeExecutable(t, filepath.Join(fakeBin, "gc"),
+		"#!/bin/sh\n"+
+			"if [ \"$1\" = \"cities\" ] && [ \"$2\" = \"list\" ]; then\n"+
+			"  printf 'NAME       PATH\\n'\n"+
+			"  printf 'thiscity   "+cityPath+"\\n'\n"+
+			"  exit 0\n"+
+			"fi\n"+
+			"exit 1\n")
+
+	// Fake pgrep: returns main, foreign, and true-zombie PIDs.
+	writeExecutable(t, filepath.Join(fakeBin, "pgrep"),
+		fmt.Sprintf("#!/bin/sh\necho %s\necho %s\necho %s\n", mainPID, foreignPID, zombiePID))
+
+	// Fake lsof: only the main port resolves (no rig ports here).
+	writeExecutable(t, filepath.Join(fakeBin, "lsof"),
+		fmt.Sprintf(`#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    -iTCP:%s) echo %s; exit 0 ;;
+  esac
+done
+exit 1
+`, mainPort, mainPID))
+
+	// Fake ps: pid_is_running uses `-o pid=`; zombie scan uses `-o args=`.
+	// args= response varies by PID so the foreign filter has something
+	// to match against.
+	writeExecutable(t, filepath.Join(fakeBin, "ps"), fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "-p" ] && [ "$3" = "-o" ]; then
+  pid="$2"
+  case "$4" in
+    pid=) printf ' %%s\n' "$pid"; exit 0 ;;
+    args=)
+      case "$pid" in
+        %s) echo "dolt sql-server --config %s" ;;
+        %s) echo "dolt sql-server --config %s" ;;
+        %s) echo "dolt sql-server --config %s" ;;
+        *) echo "dolt sql-server" ;;
+      esac
+      exit 0
+      ;;
+  esac
+fi
+exit 1
+`, mainPID, zombieConfig, foreignPID, foreignConfig, zombiePID, zombieConfig))
+
+	// Fake nc: unreachable (no real server).
+	writeExecutable(t, filepath.Join(fakeBin, "nc"), "#!/bin/sh\nexit 1\n")
+
+	// Fake dolt: SELECT 1 fails (no real server).
+	writeExecutable(t, filepath.Join(fakeBin, "dolt"), "#!/bin/sh\nexit 1\n")
+
+	root := repoRoot(t)
+	cmd := exec.Command("sh", filepath.Join(root, healthScript), "--json")
+	cmd.Env = append(
+		filteredEnv("GC_CITY_PATH", "GC_PACK_DIR", "GC_DOLT_HOST", "GC_DOLT_PORT",
+			"GC_DOLT_USER", "GC_DOLT_PASSWORD", "GC_HEALTH_SKIP_ZOMBIE_SCAN", "PATH"),
+		"GC_CITY_PATH="+cityPath,
+		"GC_PACK_DIR="+root,
+		"GC_DOLT_HOST=127.0.0.1",
+		"GC_DOLT_PORT="+mainPort,
+		"GC_DOLT_USER=root",
+		"GC_DOLT_PASSWORD=",
+		"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("health.sh failed: %v\n%s", err, out)
+	}
+
+	output := string(out)
+
+	// The foreign-workspace dolt MUST be filtered out — its --config
+	// lives outside the registered city tree.
+	if strings.Contains(output, foreignPID) {
+		t.Errorf("foreign-workspace Dolt PID %s should not be in zombie_pids; got:\n%s",
+			foreignPID, output)
+	}
+
+	// The true zombie MUST still be flagged — its --config is inside
+	// the registered city tree, so the foreign filter does not skip it.
+	if !strings.Contains(output, `"zombie_count": 1`) {
+		t.Errorf("expected zombie_count 1 (the same-city stale server); got:\n%s", output)
+	}
+	if !strings.Contains(output, zombiePID) {
+		t.Errorf("same-city zombie PID %s should be in zombie_pids; got:\n%s",
+			zombiePID, output)
+	}
+}
