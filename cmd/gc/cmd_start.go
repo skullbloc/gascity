@@ -523,8 +523,13 @@ func doStartStandalone(args []string, controllerMode bool, stdout, stderr io.Wri
 
 	recorder := events.Discard
 	var eventProv events.Provider // nil when events disabled or FileRecorder fails
-	if fr, err := events.NewFileRecorder(
-		filepath.Join(cityPath, ".gc", "events.jsonl"), stderr); err == nil {
+	evPath := filepath.Join(cityPath, ".gc", "events.jsonl")
+	if rotated, archive, err := events.MaybeRotate(evPath, supervisorEventLogRotateThreshold); err != nil {
+		fmt.Fprintf(stderr, "gc start: rotating event log %s: %v\n", evPath, err) //nolint:errcheck // best-effort stderr
+	} else if rotated {
+		fmt.Fprintf(stderr, "gc start: rotated event log %s -> %s\n", evPath, archive) //nolint:errcheck // best-effort stderr
+	}
+	if fr, err := events.NewFileRecorder(evPath, stderr); err == nil {
 		recorder = fr
 		eventProv = fr
 	}

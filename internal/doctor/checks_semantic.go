@@ -168,7 +168,7 @@ func (c *EventLogSizeCheck) Run(ctx *CheckContext) *CheckResult {
 	r.Status = StatusWarning
 	r.Message = fmt.Sprintf("events.jsonl is %s (exceeds %s threshold)",
 		humanSize(size), humanSize(c.MaxSize))
-	r.FixHint = "consider truncating or archiving .gc/events.jsonl"
+	r.FixHint = "run `gc events archive` (with the supervisor stopped) to rotate .gc/events.jsonl"
 	return r
 }
 

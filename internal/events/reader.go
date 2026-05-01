@@ -104,6 +104,10 @@ func ReadLatestSeq(path string) (uint64, error) {
 // Returns the events read, the byte offset after the last complete line,
 // and any error. Returns (nil, offset, nil) if no new data is available
 // or the file doesn't exist yet. Skips malformed lines (partial writes).
+//
+// If the file has shrunk below the caller's offset (rotation or
+// truncation), the read resumes from offset 0 so watchers do not stall
+// silently after the log is rotated.
 func ReadFrom(path string, offset int64) ([]Event, int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -113,6 +117,10 @@ func ReadFrom(path string, offset int64) ([]Event, int64, error) {
 		return nil, offset, fmt.Errorf("reading events: %w", err)
 	}
 	defer f.Close() //nolint:errcheck // read-only file
+
+	if fi, err := f.Stat(); err == nil && offset > fi.Size() {
+		offset = 0
+	}
 
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return nil, offset, fmt.Errorf("seeking events: %w", err)

@@ -155,7 +155,73 @@ DTO or SSE envelope.`,
 	cmd.Flags().StringArrayVar(&payloadMatch, "payload-match", nil, "Filter by payload field (key=value, repeatable)")
 	cmd.Flags().BoolVar(&jsonFlagDeprecated, "json", false, "Deprecated: output is always JSONL. Accepted for back-compat.")
 	_ = cmd.Flags().MarkDeprecated("json", "output is always JSONL; the flag is now a no-op and will be removed in a future release")
+	cmd.AddCommand(newEventsArchiveCmd(stdout, stderr))
 	return cmd
+}
+
+func newEventsArchiveCmd(stdout, stderr io.Writer) *cobra.Command {
+	var cityOverride string
+	cmd := &cobra.Command{
+		Use:   "archive",
+		Short: "Rotate .gc/events.jsonl to a timestamped archive (offline)",
+		Long: `Rotate .gc/events.jsonl by renaming it to a timestamped archive
+and creating a fresh empty log. The archive is named events-YYYYMMDDTHHMMSSZ.jsonl
+in the same .gc directory.
+
+This command is offline-only: it refuses to run while the supervisor or a
+city controller is running, because either may hold an open append-mode
+file descriptor against the log. Stop them first with ` + "`gc supervisor stop`" + ` or
+` + "`gc stop`" + `, then rerun. Online rotation against a live supervisor is not yet supported.`,
+		Example: `  gc events archive
+  gc events archive --city /path/to/city`,
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if cmdEventsArchive(cityOverride, stdout, stderr) != 0 {
+				return errExit
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&cityOverride, "city", "", "City directory (default: discovered from cwd)")
+	return cmd
+}
+
+func cmdEventsArchive(cityOverride string, stdout, stderr io.Writer) int {
+	cityPath := strings.TrimSpace(cityOverride)
+	if cityPath == "" {
+		discovered, _, err := resolveDashboardContext()
+		if err != nil {
+			fmt.Fprintf(stderr, "gc events archive: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		cityPath = discovered
+	}
+	if cityPath == "" {
+		fmt.Fprintln(stderr, "gc events archive: not in a city directory; pass --city <path>") //nolint:errcheck
+		return 1
+	}
+
+	if pid := supervisorAliveHook(); pid != 0 {
+		fmt.Fprintf(stderr, "gc events archive: supervisor is running (pid %d); stop it with `gc supervisor stop` and retry\n", pid) //nolint:errcheck
+		return 1
+	}
+	if pid := eventsControllerAliveHook(cityPath); pid != 0 {
+		fmt.Fprintf(stderr, "gc events archive: controller is running for %s (pid %d); stop it with `gc stop` and retry\n", cityPath, pid) //nolint:errcheck
+		return 1
+	}
+
+	evPath := filepath.Join(cityPath, ".gc", "events.jsonl")
+	rotated, archive, err := events.MaybeRotate(evPath, 1)
+	if err != nil {
+		fmt.Fprintf(stderr, "gc events archive: %v\n", err) //nolint:errcheck
+		return 1
+	}
+	if !rotated {
+		fmt.Fprintf(stdout, "gc events archive: nothing to archive (%s is empty or missing)\n", evPath) //nolint:errcheck
+		return 0
+	}
+	fmt.Fprintf(stdout, "archived to %s\n", archive) //nolint:errcheck
+	return 0
 }
 
 func cmdEvents(apiURLOverride, typeFilter, sinceFlag string, payloadMatchArgs []string, stdout, stderr io.Writer) int {

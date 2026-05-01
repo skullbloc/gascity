@@ -188,6 +188,13 @@ var (
 	supervisorReloadWaitTimeout  = 5 * time.Minute
 )
 
+// supervisorEventLogRotateThreshold is the size at which the supervisor
+// renames .gc/events.jsonl to a timestamped archive at city startup.
+// Picked above the doctor's 100 MB warn threshold so a single bumpy day
+// triggers rotation rather than every restart, and well below the GB
+// range where rename-and-reopen starts to feel slow.
+var supervisorEventLogRotateThreshold int64 = 256 * 1024 * 1024
+
 // shutdownState tracks the supervisor's shutdown progress so socket
 // handlers can report the final result to --wait clients. done is closed
 // when shutdown has finished (successful or not). err is populated (may
@@ -1252,6 +1259,11 @@ func reconcileCities(
 		rec := events.Discard
 		var eventProv events.Provider
 		evPath := filepath.Join(path, ".gc", "events.jsonl")
+		if rotated, archive, err := events.MaybeRotate(evPath, supervisorEventLogRotateThreshold); err != nil {
+			fmt.Fprintf(stderr, "supervisor: rotating event log %s: %v\n", evPath, err) //nolint:errcheck // best-effort stderr
+		} else if rotated {
+			fmt.Fprintf(stderr, "supervisor: rotated event log %s -> %s\n", evPath, archive) //nolint:errcheck // best-effort stderr
+		}
 		fr, frErr := events.NewFileRecorder(evPath, stderr)
 		if frErr == nil {
 			rec = fr

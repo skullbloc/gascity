@@ -1092,6 +1092,36 @@ gc events
 | `--type` | string |  | Filter by event type (e.g. bead.created) |
 | `--watch` | bool |  | Block until matching events arrive (exits after first match or buffered replay) |
 
+| Subcommand | Description |
+|------------|-------------|
+| [gc events archive](#gc-events-archive) | Rotate .gc/events.jsonl to a timestamped archive (offline) |
+
+## gc events archive
+
+Rotate .gc/events.jsonl by renaming it to a timestamped archive
+and creating a fresh empty log. The archive is named events-YYYYMMDDTHHMMSSZ.jsonl
+in the same .gc directory.
+
+This command is offline-only: it refuses to run while the supervisor or a
+city controller is running, because either may hold an open append-mode
+file descriptor against the log. Stop them first with `gc supervisor stop` or
+`gc stop`, then rerun. Online rotation against a live supervisor is not yet supported.
+
+```
+gc events archive [flags]
+```
+
+**Example:**
+
+```
+gc events archive
+  gc events archive --city /path/to/city
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--city` | string |  | City directory (default: discovered from cwd) |
+
 ## gc formula
 
 Manage and inspect formulas
