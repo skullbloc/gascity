@@ -38,6 +38,31 @@ else
     SYNC="${4:-}"
 fi
 
+ensure_https_remotes() {
+    # Worktrees inherit remote URLs from the rig. When the rig uses SSH-form
+    # GitHub URLs (git@github.com:*), fresh agent sessions can't push or fetch:
+    # the host's SSH keys are passphrase-locked and the spawned session has no
+    # ssh-agent identities to inherit. HTTPS works because gh CLI is logged in
+    # with a repo-scoped token and `gh auth setup-git` installs the helper.
+    #
+    # Strategy: set a per-worktree `url.<https>.insteadOf` rule that rewrites
+    # SSH-form GitHub URLs to HTTPS at fetch/push time, leaving the rig's
+    # actual remote URL untouched. Per-worktree config requires
+    # extensions.worktreeConfig (Git 2.19+) and repository format version 1,
+    # which we enable on the rig if not already.
+    git -C "$RIG_ROOT" rev-parse --git-dir >/dev/null 2>&1 || return 0
+
+    git -C "$RIG_ROOT" config core.repositoryformatversion 1 2>/dev/null || true
+    git -C "$RIG_ROOT" config extensions.worktreeConfig true 2>/dev/null || true
+
+    git -C "$WT" config --worktree \
+        url."https://github.com/".insteadOf "git@github.com:" 2>/dev/null || true
+
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        gh auth setup-git >/dev/null 2>&1 || true
+    fi
+}
+
 sync_worktree() {
     [ "$SYNC" = "--sync" ] || return 0
     if ! git -C "$WT" remote get-url origin >/dev/null 2>&1; then
@@ -57,6 +82,7 @@ branch_name() {
 
 # Idempotent: skip if worktree already exists.
 if [ -d "$WT/.git" ] || [ -f "$WT/.git" ]; then
+    ensure_https_remotes
     sync_worktree
     exit 0
 fi
@@ -176,6 +202,8 @@ append_exclude ".opencode/"
 append_exclude ".github/hooks/"
 append_exclude ".github/copilot-instructions.md"
 append_exclude "state.json"
+
+ensure_https_remotes
 
 # Optional sync.
 sync_worktree

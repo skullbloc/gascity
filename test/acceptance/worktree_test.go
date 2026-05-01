@@ -25,7 +25,7 @@ func TestWorktreeBranchNamespacing(t *testing.T) {
 
 	// Find the worktree-setup script from examples.
 	scriptSrc := filepath.Join(findModuleRoot(t), "examples", "gastown",
-		"packs", "gastown", "scripts", "worktree-setup.sh")
+		"packs", "gastown", "assets", "scripts", "worktree-setup.sh")
 	if _, err := os.Stat(scriptSrc); err != nil {
 		t.Skipf("worktree-setup.sh not found: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestWorktreeIdempotent(t *testing.T) {
 	git(t, repoDir, "commit", "--allow-empty", "-m", "initial")
 
 	scriptSrc := filepath.Join(findModuleRoot(t), "examples", "gastown",
-		"packs", "gastown", "scripts", "worktree-setup.sh")
+		"packs", "gastown", "assets", "scripts", "worktree-setup.sh")
 	if _, err := os.Stat(scriptSrc); err != nil {
 		t.Skipf("worktree-setup.sh not found: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestWorktreeBeadRedirect(t *testing.T) {
 	git(t, repoDir, "commit", "--allow-empty", "-m", "initial")
 
 	scriptSrc := filepath.Join(findModuleRoot(t), "examples", "gastown",
-		"packs", "gastown", "scripts", "worktree-setup.sh")
+		"packs", "gastown", "assets", "scripts", "worktree-setup.sh")
 	if _, err := os.Stat(scriptSrc); err != nil {
 		t.Skipf("worktree-setup.sh not found: %v", err)
 	}
@@ -119,6 +119,101 @@ func TestWorktreeBeadRedirect(t *testing.T) {
 	want := repoDir + "/.beads"
 	if got := strings.TrimSpace(string(data)); got != want {
 		t.Fatalf(".beads/redirect = %q, want %q", got, want)
+	}
+}
+
+// TestWorktreeRewritesSSHToHTTPS verifies that worktree-setup.sh installs a
+// per-worktree url.<https>.insteadOf rule so that SSH-form GitHub remotes are
+// rewritten to HTTPS at fetch/push time. Fresh agent sessions can't use SSH
+// (no ssh-agent identities inherited from the host), so the worktree must see
+// HTTPS even when the rig's origin is SSH.
+//
+// Regression test for ga-syde3.
+func TestWorktreeRewritesSSHToHTTPS(t *testing.T) {
+	repoDir := t.TempDir()
+	git(t, repoDir, "init")
+	git(t, repoDir, "commit", "--allow-empty", "-m", "initial")
+	git(t, repoDir, "remote", "add", "origin", "git@github.com:foo/bar.git")
+
+	scriptSrc := filepath.Join(findModuleRoot(t), "examples", "gastown",
+		"packs", "gastown", "assets", "scripts", "worktree-setup.sh")
+	if _, err := os.Stat(scriptSrc); err != nil {
+		t.Skipf("worktree-setup.sh not found: %v", err)
+	}
+
+	wt := filepath.Join(t.TempDir(), "worktree")
+	runScript(t, scriptSrc, repoDir, wt, "polecat")
+
+	// Worktree must see HTTPS via insteadOf rewrite.
+	got := git(t, wt, "remote", "get-url", "origin")
+	want := "https://github.com/foo/bar.git"
+	if got != want {
+		t.Fatalf("worktree origin URL = %q, want %q (insteadOf rewrite missing)", got, want)
+	}
+
+	// Rig's actual remote URL must be preserved (the rule is per-worktree).
+	gotRig := git(t, repoDir, "remote", "get-url", "origin")
+	wantRig := "git@github.com:foo/bar.git"
+	if gotRig != wantRig {
+		t.Fatalf("rig origin URL = %q, want %q (rig URL must not be rewritten)", gotRig, wantRig)
+	}
+}
+
+// TestWorktreeIgnoresNonGitHubRemotes verifies that non-GitHub remotes are
+// left alone. The insteadOf rule only matches "git@github.com:", so other
+// hosts (gitlab, self-hosted) should be unaffected.
+func TestWorktreeIgnoresNonGitHubRemotes(t *testing.T) {
+	repoDir := t.TempDir()
+	git(t, repoDir, "init")
+	git(t, repoDir, "commit", "--allow-empty", "-m", "initial")
+	nonGH := "git@gitlab.example.com:foo/bar.git"
+	git(t, repoDir, "remote", "add", "origin", nonGH)
+
+	scriptSrc := filepath.Join(findModuleRoot(t), "examples", "gastown",
+		"packs", "gastown", "assets", "scripts", "worktree-setup.sh")
+	if _, err := os.Stat(scriptSrc); err != nil {
+		t.Skipf("worktree-setup.sh not found: %v", err)
+	}
+
+	wt := filepath.Join(t.TempDir(), "worktree")
+	runScript(t, scriptSrc, repoDir, wt, "polecat")
+
+	got := git(t, wt, "remote", "get-url", "origin")
+	if got != nonGH {
+		t.Fatalf("non-GitHub origin URL = %q, want %q (must not be rewritten)", got, nonGH)
+	}
+}
+
+// TestWorktreeHTTPSRewriteIdempotent verifies that running worktree-setup.sh
+// twice on a worktree with an SSH origin produces the same per-worktree
+// config — the insteadOf rule is set once and re-running doesn't accumulate
+// or duplicate entries.
+func TestWorktreeHTTPSRewriteIdempotent(t *testing.T) {
+	repoDir := t.TempDir()
+	git(t, repoDir, "init")
+	git(t, repoDir, "commit", "--allow-empty", "-m", "initial")
+	git(t, repoDir, "remote", "add", "origin", "git@github.com:foo/bar.git")
+
+	scriptSrc := filepath.Join(findModuleRoot(t), "examples", "gastown",
+		"packs", "gastown", "assets", "scripts", "worktree-setup.sh")
+	if _, err := os.Stat(scriptSrc); err != nil {
+		t.Skipf("worktree-setup.sh not found: %v", err)
+	}
+
+	wt := filepath.Join(t.TempDir(), "worktree")
+	runScript(t, scriptSrc, repoDir, wt, "polecat")
+	first := git(t, wt, "config", "--worktree", "--get-all",
+		"url.https://github.com/.insteadOf")
+
+	runScript(t, scriptSrc, repoDir, wt, "polecat")
+	second := git(t, wt, "config", "--worktree", "--get-all",
+		"url.https://github.com/.insteadOf")
+
+	if first != second {
+		t.Fatalf("insteadOf rule changed between runs:\n  first:  %q\n  second: %q", first, second)
+	}
+	if first != "git@github.com:" {
+		t.Fatalf("insteadOf rule = %q, want \"git@github.com:\"", first)
 	}
 }
 
