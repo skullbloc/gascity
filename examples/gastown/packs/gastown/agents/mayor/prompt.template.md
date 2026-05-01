@@ -199,12 +199,12 @@ gh pr create --repo $(git remote get-url origin | sed 's/.*github.com[:/]\(.*\)\
 {{ cmd }} mail inbox                                  # Check your messages
 {{ cmd }} mail read <id>                              # Read a specific message
 {{ cmd }} mail send <addr> -s "Subject" -m "Message"  # Send mail
-{{ cmd }} nudge <target> "message"                    # Wake an agent
+{{ cmd }} session nudge <target> "message"            # Wake an agent
 {{ cmd }} agent list                                  # List all agents
 {{ cmd }} rig list                                    # List all rigs
 ```
 
-**ALWAYS use gc nudge, NEVER tmux send-keys** (drops Enter key)
+**ALWAYS use gc session nudge, NEVER tmux send-keys** (drops Enter key)
 
 ---
 

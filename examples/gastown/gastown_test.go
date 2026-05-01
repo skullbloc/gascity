@@ -262,7 +262,7 @@ func TestWitnessPatrolUsesCanonicalRefineryAlias(t *testing.T) {
 	body := string(data)
 	for _, want := range []string{
 		`gc bd list --assignee=<rig>/gastown.refinery --status=open --json`,
-		`gc nudge <rig>/gastown.refinery "Work beads waiting for merge. Please check queue."`,
+		`gc session nudge <rig>/gastown.refinery "Work beads waiting for merge. Please check queue."`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("witness patrol formula missing canonical refinery alias %q", want)
@@ -270,7 +270,7 @@ func TestWitnessPatrolUsesCanonicalRefineryAlias(t *testing.T) {
 	}
 	for _, bad := range []string{
 		`--assignee=<rig>/refinery `,
-		`gc nudge <rig>/refinery "`,
+		`gc session nudge <rig>/refinery "`,
 	} {
 		if strings.Contains(body, bad) {
 			t.Errorf("witness patrol formula contains short-form refinery alias %q", bad)

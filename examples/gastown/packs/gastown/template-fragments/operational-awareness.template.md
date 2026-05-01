@@ -40,14 +40,14 @@ server and degrade performance. Use `gc dolt cleanup` to remove them safely.
 
 ### Communication: Nudge First, Mail Rarely
 
-Every `gc mail send` creates a permanent bead with a Dolt commit. `gc nudge`
+Every `gc mail send` creates a permanent bead with a Dolt commit. `gc session nudge`
 is ephemeral and costs zero. **Default to nudge for all routine communication.**
 
 **The litmus test:** "If the recipient dies and restarts, do they need this
 message?" If yes -> mail. If no -> nudge.
 
 **Ephemeral protocol messages:** MERGE_READY, MERGE_FAILED, RECOVERY_NEEDED,
-LIFECYCLE:Shutdown, and WORK_DONE are routine signals. Use `gc nudge` — the
+LIFECYCLE:Shutdown, and WORK_DONE are routine signals. Use `gc session nudge` — the
 underlying bead state (assignee, status, metadata) is the durable record.
 
 **When you must mail**, use shell quoting for multi-line messages:
