@@ -16,10 +16,17 @@ import (
 // (internal/convergence/create.go) creates beads with type="convergence"
 // as the root of every convergence loop. Without it registered, every
 // `gc converge create` call fails with "invalid issue type: convergence".
+//
+// "warrant" is included because witness, deacon, and boot agents file
+// stuck-agent warrants with `bd create --type=warrant --label=pool:dog`
+// (see witness/deacon/boot prompt templates and mol-shutdown-dance,
+// mol-witness-patrol, mol-deacon-patrol formulas). Without it registered,
+// every warrant filing fails with "invalid issue type: warrant" and
+// stuck-agent recovery silently breaks.
 var RequiredCustomTypes = []string{
 	"molecule", "convoy", "message", "event", "gate",
 	"merge-request", "agent", "role", "rig", "session", "spec",
-	"convergence",
+	"convergence", "warrant",
 }
 
 // CustomTypesCheck verifies that all required Gas City custom bead

@@ -67,6 +67,26 @@ func TestCustomTypesCheck_RequiredTypesIncludeConvergence(t *testing.T) {
 	}
 }
 
+// TestCustomTypesCheck_RequiredTypesIncludeWarrant verifies that
+// "warrant" is in the required list. The witness, deacon, and boot
+// agents file stuck-agent warrants via `bd create --type=warrant
+// --label=pool:dog`, and the dog pool / mol-shutdown-dance dispatcher
+// filters on `--type=warrant`. If the type isn't registered, every
+// warrant filing fails with "invalid issue type: warrant" and
+// stuck-agent recovery silently breaks.
+func TestCustomTypesCheck_RequiredTypesIncludeWarrant(t *testing.T) {
+	found := false
+	for _, typ := range RequiredCustomTypes {
+		if typ == "warrant" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("RequiredCustomTypes must include 'warrant' — witness/deacon/boot agents require this type for stuck-agent dispatch")
+	}
+}
+
 // TestMergeCustomTypes exercises the merge/dedup/preservation logic that
 // backs CustomTypesCheck.Fix(). The regression it guards against is
 // `--fix` overwriting user-defined types (which was the pre-PR behavior
@@ -190,6 +210,7 @@ func TestCustomTypesCheck_RequiredTypesComplete(t *testing.T) {
 		"event": true, "gate": true, "merge-request": true,
 		"agent": true, "role": true, "rig": true,
 		"session": true, "spec": true, "convergence": true,
+		"warrant": true,
 	}
 	for _, typ := range RequiredCustomTypes {
 		if !expected[typ] {
