@@ -877,7 +877,7 @@ func pinAwakeWakeReasonVisible(b beads.Bead, cfg *config.City, now time.Time) bo
 	if b.Status == "closed" || state == "closed" || state == "suspended" {
 		return false
 	}
-	if isDrainedSessionBead(b) || b.Metadata["dependency_only"] == "true" || b.Metadata["wait_hold"] != "" {
+	if b.Metadata["dependency_only"] == "true" || b.Metadata["wait_hold"] != "" {
 		return false
 	}
 	if metadataTimeInFuture(b.Metadata["held_until"], now) || metadataTimeInFuture(b.Metadata["quarantined_until"], now) {

@@ -276,8 +276,11 @@ func ComputeAwakeSet(input AwakeInput) map[string]AwakeDecision {
 		}
 
 		// Durable pin override — wakes and keeps the session awake while
-		// still respecting hard blockers applied below.
-		pinBlockedByState := bead.State == "suspended" || bead.State == "closed" || bead.Drained
+		// still respecting hard blockers applied below. Pin is explicit user
+		// intent (like attach) and overrides drained, matching the
+		// AcknowledgeDrainPatch semantics: demand alone does not reselect a
+		// drained bead, but explicit attach or work can.
+		pinBlockedByState := bead.State == "suspended" || bead.State == "closed"
 		if !decision.ShouldWake && bead.Pinned && !pinBlockedByState && !bead.DependencyOnly && !bead.WaitHold {
 			if agent, ok := agentsByName[bead.Template]; ok && !agent.Suspended {
 				decision.ShouldWake = true

@@ -274,6 +274,28 @@ func TestPhase2ComputeAwakeSet_PinnedSessionWakesAndSuppressesIdleSleep(t *testi
 	assertReason(t, result, "test-city--worker", "pin")
 }
 
+func TestPhase2ComputeAwakeSet_PinOverridesDrained(t *testing.T) {
+	// Drained is a compatibility-only sleep state — explicit user intent
+	// (attach, pending interaction, assigned work, or pin) overrides it.
+	// Without this, named-always sessions that drain themselves wedge in
+	// drained state and ignore subsequent `gc session pin`.
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "worker"}},
+		SessionBeads: []AwakeSessionBead{{
+			ID:          "mc-1",
+			SessionName: "test-city--worker",
+			Template:    "worker",
+			State:       "drained",
+			Drained:     true,
+			Pinned:      true,
+		}},
+		Now: now,
+	})
+
+	assertAwake(t, result, "test-city--worker")
+	assertReason(t, result, "test-city--worker", "pin")
+}
+
 func TestPhase2ComputeAwakeSet_PinRespectsHardBlockers(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -331,14 +353,6 @@ func TestPhase2ComputeAwakeSet_PinRespectsHardBlockers(t *testing.T) {
 			bead: AwakeSessionBead{
 				State:            "asleep",
 				QuarantinedUntil: now.Add(time.Hour),
-			},
-		},
-		{
-			name:   "drained",
-			agents: []AwakeAgent{{QualifiedName: "worker"}},
-			bead: AwakeSessionBead{
-				State:   "asleep",
-				Drained: true,
 			},
 		},
 	}

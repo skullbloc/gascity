@@ -516,11 +516,39 @@ func TestDrained_WithAssignedWork_Wakes(t *testing.T) {
 	assertReason(t, result, "polecat-mc-1", "assigned-work")
 }
 
-func TestDrained_PinnedStaysAsleepUntilUndrained(t *testing.T) {
+func TestDrained_WokenByPin(t *testing.T) {
+	// Pin is explicit user intent — like attach — and overrides drained.
+	// Matches AcknowledgeDrainPatch semantics: "demand alone does not reselect
+	// it, but explicit attach or work can."
 	result := ComputeAwakeSet(AwakeInput{
 		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
 		SessionBeads: []AwakeSessionBead{
 			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "asleep", Drained: true, Pinned: true},
+		},
+		Now: now,
+	})
+	assertAwake(t, result, "polecat-mc-1")
+	assertReason(t, result, "polecat-mc-1", "pin")
+}
+
+func TestPin_SuspendedStaysAsleep(t *testing.T) {
+	// Pin still respects hard blockers: suspended state keeps the session asleep.
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
+		SessionBeads: []AwakeSessionBead{
+			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "suspended", Pinned: true},
+		},
+		Now: now,
+	})
+	assertAsleep(t, result, "polecat-mc-1")
+}
+
+func TestPin_ClosedStaysAsleep(t *testing.T) {
+	// Pin still respects hard blockers: closed state keeps the session asleep.
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
+		SessionBeads: []AwakeSessionBead{
+			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "closed", Pinned: true},
 		},
 		Now: now,
 	})
