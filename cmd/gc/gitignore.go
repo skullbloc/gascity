@@ -8,11 +8,15 @@ import (
 )
 
 // cityGitignoreEntries are the paths that gc init writes into .gitignore.
-var cityGitignoreEntries = []string{".gc/", ".beads/*", "!.beads/config.yaml", "!.beads/metadata.json", "hooks/", ".runtime/"}
+// The `!.beads/*.jsonl` carve-out re-includes bd auto-export targets
+// (issues.jsonl, interactions.jsonl, routes.jsonl) so `git add
+// .beads/*.jsonl` succeeds; without it, bd emits a "git add failed"
+// warning on every write and federation never lands in commits.
+var cityGitignoreEntries = []string{".gc/", ".beads/*", "!.beads/config.yaml", "!.beads/metadata.json", "!.beads/*.jsonl", "hooks/", ".runtime/"}
 
 // rigGitignoreEntries are the paths that gc rig add writes into
 // the rig-scoped .gitignore.
-var rigGitignoreEntries = []string{".beads/*", "!.beads/config.yaml", "!.beads/metadata.json"}
+var rigGitignoreEntries = []string{".beads/*", "!.beads/config.yaml", "!.beads/metadata.json", "!.beads/*.jsonl"}
 
 func usesCanonicalBeadsEntries(entries []string) bool {
 	for _, entry := range entries {

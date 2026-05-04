@@ -145,6 +145,10 @@ func TestResolveBdScopeTarget(t *testing.T) {
 		return beadID == "projectwrenunity-0xk" || beadID == "projectwrenunity-abc"
 	}
 	cityDir := filepath.Join(t.TempDir(), "city")
+	if err := os.MkdirAll(cityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setCwd(t, cityDir)
 	cfgForTest := func() *config.City {
 		return &config.City{
 			Workspace: config.Workspace{Name: "gascity"},
@@ -499,6 +503,7 @@ prefix = "repo"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	setCwd(t, cityDir)
 
 	binDir := t.TempDir()
 	capture := filepath.Join(t.TempDir(), "gc-bd-city-env.txt")
@@ -572,8 +577,14 @@ name = "demo"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	setCwd(t, cityDir)
 	t.Setenv("GC_CITY_PATH", cityDir)
 	t.Setenv("GC_BEADS", "file")
+	// Clear scope-pin envs so the GC_BEADS=file override applies to cityDir
+	// instead of being scoped to the parent process's rig (e.g. polecat env
+	// sets GC_BEADS_SCOPE_ROOT to the rig path, which would otherwise make
+	// the override no-op and the bd default ("bd") leak through).
+	t.Setenv("GC_BEADS_SCOPE_ROOT", "")
 
 	var stdout, stderr bytes.Buffer
 	if got := doBd([]string{"list"}, &stdout, &stderr); got == 0 {
@@ -603,6 +614,7 @@ provider = "file"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	setCwd(t, cityDir)
 	t.Setenv("GC_CITY_PATH", cityDir)
 
 	var stdout, stderr bytes.Buffer

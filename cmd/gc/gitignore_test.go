@@ -88,17 +88,23 @@ func TestEnsureGitignoreEntries_Idempotent(t *testing.T) {
 	}
 
 	got := string(f.Files[filepath.Join("/city", ".gitignore")])
+	// Count exact line matches; substring counting double-counts entries
+	// that share prefixes (e.g. ".beads/*" inside "!.beads/*.jsonl").
+	lineCounts := make(map[string]int)
+	for _, line := range strings.Split(got, "\n") {
+		lineCounts[line]++
+	}
 	for _, entry := range entries {
-		if strings.Count(got, entry) != 1 {
-			t.Errorf("%q appears %d times after 3 passes, want 1; got:\n%s",
-				entry, strings.Count(got, entry), got)
+		if lineCounts[entry] != 1 {
+			t.Errorf("%q appears as a line %d times after 3 passes, want 1; got:\n%s",
+				entry, lineCounts[entry], got)
 		}
 	}
 }
 
 func TestEnsureGitignoreEntries_NoOpWhenAllPresent(t *testing.T) {
 	f := fsys.NewFake()
-	original := ".gc/\n.beads/*\n!.beads/config.yaml\n!.beads/metadata.json\nhooks/\n.runtime/\n"
+	original := ".gc/\n.beads/*\n!.beads/config.yaml\n!.beads/metadata.json\n!.beads/*.jsonl\nhooks/\n.runtime/\n"
 	f.Files[filepath.Join("/city", ".gitignore")] = []byte(original)
 
 	if err := ensureGitignoreEntries(f, "/city", cityGitignoreEntries); err != nil {
@@ -152,6 +158,68 @@ func TestDoInit_GitignoreIdempotent(t *testing.T) {
 	second := string(f.Files[filepath.Join("/bright-lights", ".gitignore")])
 	if first != second {
 		t.Errorf("gitignore changed on second pass;\nfirst:  %q\nsecond: %q", first, second)
+	}
+}
+
+// TestGitignoreEntries_AllowJSONLBeadsExports asserts the bd auto-export
+// contract: `.beads/*.jsonl` files (issues.jsonl, interactions.jsonl,
+// routes.jsonl) must NOT be ignored. Without the carve-out, `git add
+// .beads/*.jsonl` fails with "paths are ignored", and bd auto-export
+// emits "Warning: auto-export: git add failed: exit status 1" on every
+// write. The negation must follow the broad `.beads/*` rule for git's
+// gitignore semantics to apply it.
+func TestGitignoreEntries_AllowJSONLBeadsExports(t *testing.T) {
+	for name, entries := range map[string][]string{
+		"city": cityGitignoreEntries,
+		"rig":  rigGitignoreEntries,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ignoreIdx, allowIdx := -1, -1
+			for i, e := range entries {
+				switch e {
+				case ".beads/*":
+					ignoreIdx = i
+				case "!.beads/*.jsonl":
+					allowIdx = i
+				}
+			}
+			if ignoreIdx < 0 {
+				t.Fatalf("%s entries missing %q rule; got: %v", name, ".beads/*", entries)
+			}
+			if allowIdx < 0 {
+				t.Fatalf("%s entries missing %q carve-out for bd auto-export; got: %v", name, "!.beads/*.jsonl", entries)
+			}
+			if allowIdx < ignoreIdx {
+				t.Errorf("%s entries: %q at index %d must come AFTER %q at index %d (gitignore negation order); got: %v",
+					name, "!.beads/*.jsonl", allowIdx, ".beads/*", ignoreIdx, entries)
+			}
+		})
+	}
+}
+
+// TestEnsureGitignoreEntries_PreservesNegationOrder asserts that the
+// rendered .gitignore preserves slice order so that the `!.beads/*.jsonl`
+// negation appears below the broad `.beads/*` rule. Git's gitignore
+// semantics require the negation to follow the prior matching rule.
+func TestEnsureGitignoreEntries_PreservesNegationOrder(t *testing.T) {
+	f := fsys.NewFake()
+
+	if err := ensureGitignoreEntries(f, "/rig", rigGitignoreEntries); err != nil {
+		t.Fatalf("ensureGitignoreEntries: %v", err)
+	}
+
+	got := string(f.Files[filepath.Join("/rig", ".gitignore")])
+	ignoreAt := strings.Index(got, "\n.beads/*\n")
+	allowAt := strings.Index(got, "\n!.beads/*.jsonl\n")
+	if ignoreAt < 0 {
+		t.Fatalf("rendered .gitignore missing %q on its own line; got:\n%s", ".beads/*", got)
+	}
+	if allowAt < 0 {
+		t.Fatalf("rendered .gitignore missing %q on its own line; got:\n%s", "!.beads/*.jsonl", got)
+	}
+	if allowAt < ignoreAt {
+		t.Errorf("rendered .gitignore has %q before %q; negation will not apply; got:\n%s",
+			"!.beads/*.jsonl", ".beads/*", got)
 	}
 }
 
