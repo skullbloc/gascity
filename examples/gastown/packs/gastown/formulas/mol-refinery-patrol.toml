@@ -109,10 +109,17 @@ needs = ["check-inbox"]
 description = """
 **Config: event_timeout = {{event_timeout}}**
 
-Search for work beads assigned to you with branch metadata:
+Search for work beads assigned to you with branch metadata. Try the
+canonical V2 alias first ($GC_AGENT resolves to e.g. `<rig>/gastown.refinery`),
+then fall back to the legacy short alias (`<rig>/refinery`) so beads handed
+off by polecats running pre-ga-3grxv prompts are still claimed:
 ```bash
-WORK=$(gc bd list --assignee=$GC_AGENT --status=open \
+WORK=$(gc bd list --assignee="$GC_AGENT" --status=open \
   --exclude-type=epic --limit=1 --json | jq -r '.[0].id // empty')
+if [ -z "$WORK" ]; then
+  WORK=$(gc bd list --assignee="${GC_AGENT%%/*}/refinery" --status=open \
+    --exclude-type=epic --limit=1 --json | jq -r '.[0].id // empty')
+fi
 ```
 
 If found: read the bead metadata to confirm it has a branch:

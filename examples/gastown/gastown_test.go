@@ -247,6 +247,34 @@ func TestPolecatHandoffUsesCanonicalRefineryAlias(t *testing.T) {
 	}
 }
 
+// TestRefineryFindWorkQueriesBothAliasForms verifies the refinery's
+// find-work query tries both the canonical V2 alias ($GC_AGENT, e.g.
+// `<rig>/gastown.refinery`) AND the legacy short alias (`<rig>/refinery`).
+// The canonical query is primary; the short-form query is a fallback that
+// catches in-flight beads handed off by polecats running pre-ga-3grxv
+// prompts (which still write the short form). Without the fallback, work
+// beads queued under the short alias never get claimed and the refinery
+// queue stalls — the symptom reported in ga-txnzs (9 beads stuck for 5h+).
+//
+// Regression test for ga-txnzs.
+func TestRefineryFindWorkQueriesBothAliasForms(t *testing.T) {
+	dir := exampleDir()
+	path := filepath.Join(dir, "packs", "gastown", "formulas", "mol-refinery-patrol.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading refinery formula: %v", err)
+	}
+	body := string(data)
+	for _, want := range []string{
+		`gc bd list --assignee="$GC_AGENT" --status=open`,
+		`gc bd list --assignee="${GC_AGENT%%/*}/refinery" --status=open`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("refinery patrol formula missing find-work query %q", want)
+		}
+	}
+}
+
 // TestWitnessPatrolUsesCanonicalRefineryAlias verifies the witness patrol's
 // refinery queue checks use the canonical V2 qualified name. The polecat
 // hands off work using the canonical form, so witness queries that use the
