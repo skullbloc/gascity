@@ -1,0 +1,336 @@
+description = """
+Pack creation formula — scaffolds a new Gas City pack from requirements.
+
+This formula guides creation of a complete, well-structured Gas City pack:
+pack.toml, prompt templates, formulas, and tests. It works for any domain —
+the bead description provides the pack specification (agents, formulas,
+domain purpose, composition strategy).
+
+Designed to be poured twice (or N times) to create multiple packs from
+a consistent process. The formula enforces structure without constraining
+domain — what the pack DOES comes from the bead, how it's BUILT comes
+from this formula.
+
+## Variables
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| issue | caller | The work bead ID containing pack requirements |
+| pack_dir | caller | Target directory for the pack (e.g., examples/llm-wiki) |
+| pack_name | caller | Pack name for pack.toml (e.g., llm-wiki) |
+| base_branch | caller | Branch to base work on (default: main) |
+"""
+formula = "mol-create-pack"
+version = 1
+
+[vars]
+[vars.issue]
+description = "The work bead ID containing pack requirements and specification"
+required = true
+
+[vars.pack_name]
+description = "Pack name (used in pack.toml [pack] name field)"
+required = true
+
+[vars.pack_dir]
+description = "Target directory relative to repo root (e.g., examples/llm-wiki)"
+required = true
+
+[vars.base_branch]
+description = "Base branch to create feature branch from"
+default = "main"
+
+[[steps]]
+id = "load-requirements"
+title = "Read bead and understand what this pack needs to do"
+description = """
+Read the work bead to understand the pack specification.
+
+**1. Read the assignment:**
+```bash
+bd show {{issue}}
+bd show {{issue}} --json | jq '.metadata'
+```
+
+**2. Extract from the bead description:**
+- Pack purpose and domain
+- Agent definitions (name, scope, count, what each does)
+- Formula definitions (what workflows the pack needs)
+- Composition strategy (what other packs it works with)
+- Any shared prompt fragments needed
+- Any special setup (pre_start scripts, tools, env vars)
+
+**3. Check for existing packs to reference:**
+
+Look at existing examples for structural conventions:
+```bash
+ls examples/
+cat examples/gastown/packs/gastown/pack.toml
+ls examples/gastown/packs/gastown/prompts/
+ls examples/gastown/packs/gastown/formulas/
+```
+
+Study how agents, prompts, and formulas reference each other.
+
+**4. Check inbox for additional context:**
+```bash
+gc mail inbox
+```
+
+**Exit criteria:** You can list every agent, formula, and prompt this pack needs."""
+
+[[steps]]
+id = "scaffold"
+needs = ["load-requirements"]
+title = "Create pack directory structure"
+description = """
+Create the directory skeleton for the pack.
+
+```bash
+mkdir -p {{pack_dir}}/packs/{{pack_name}}/{prompts/shared,formulas,overlays/default,scripts}
+```
+
+Verify the structure:
+```bash
+find {{pack_dir}} -type d | sort
+```
+
+**Standard pack layout:**
+```
+{{pack_dir}}/
+  packs/{{pack_name}}/
+    pack.toml              # Pack definition
+    prompts/               # Agent prompt templates
+      shared/              # Shared template fragments
+    formulas/              # Pack-specific formulas
+      orders/              # Optional: periodic orders
+    overlays/
+      default/             # Default overlay files
+    scripts/               # Setup/utility scripts
+```
+
+**Exit criteria:** Directory structure exists and matches the layout above."""
+
+[[steps]]
+id = "write-pack-toml"
+needs = ["scaffold"]
+title = "Write pack.toml with agent definitions"
+description = """
+Write the pack definition file.
+
+**File:** `{{pack_dir}}/packs/{{pack_name}}/pack.toml`
+
+**Required sections:**
+```toml
+[pack]
+name = "{{pack_name}}"
+schema = 1
+# includes = ["other-pack"]  # Only if this pack depends on another
+
+[formulas]
+dir = "formulas"
+
+# One [[agent]] block per agent:
+[[agent]]
+name = "<agent-name>"
+scope = "<city|rig>"
+prompt_template = "prompts/<agent-name>.md.tmpl"
+work_dir = "<appropriate working directory>"
+nudge = "<startup instruction>"
+# For pool agents:
+# min_active_sessions = 0
+# max_active_sessions = N
+# namepool = "namepools/<pool>.txt"
+```
+
+**Conventions from existing packs:**
+- `scope = "city"` for coordinators and singletons
+- `scope = "rig"` for per-project workers
+- `work_dir` uses `{{.Rig}}` and `{{.AgentBase}}` template variables
+- Pool agents have `min_active_sessions = 0` (spawn on demand)
+- `idle_timeout` appropriate to the agent's work pattern
+- `env` for agent-specific configuration variables
+
+**Exit criteria:** pack.toml parses cleanly and defines all required agents."""
+
+[[steps]]
+id = "write-prompts"
+needs = ["write-pack-toml"]
+title = "Write prompt templates for each agent"
+description = """
+Create a `.md.tmpl` file for each agent defined in pack.toml.
+
+**For each agent, write:** `{{pack_dir}}/packs/{{pack_name}}/prompts/<agent>.md.tmpl`
+
+**Template structure (follow gastown conventions):**
+```markdown
+# <Role> Context
+
+> **Recovery**: Run `{{ cmd }} prime` after compaction, clear, or new session
+
+## Your Role: <ROLE> (<description>)
+
+You are <agent-name> — <one-line description>.
+
+<Role-specific sections: what they do, how they do it, what tools they use>
+
+## Work Protocol
+
+Your work follows the **<formula-name>** formula.
+
+**FIRST: Read your formula steps.** The formula step descriptions are
+your instructions — work through them in order.
+
+## Startup Protocol
+
+> **The Universal Propulsion Principle: If you find something on your hook, YOU RUN IT.**
+
+```bash
+# Check for assigned work
+bd list --assignee=$GC_AGENT --status=in_progress
+{{ .WorkQuery }}
+bd update <id> --claim
+```
+
+## Command Quick-Reference
+
+<Agent-specific command table>
+```
+
+**Shared fragments:** Write reusable sections to `prompts/shared/`:
+```markdown
+{{define "<fragment-name>"}}
+## <Section>
+<content using {{.RigName}}, {{.WorkDir}}, etc.>
+{{end}}
+```
+
+Include in agent templates via `{{ template "<fragment-name>" . }}`
+
+**Key template variables available:**
+- `{{ .AgentName }}` — qualified name (e.g., "rig/agent-1")
+- `{{ .RigName }}` — rig name (empty for city-scoped)
+- `{{ .WorkDir }}` — agent working directory
+- `{{ .CityRoot }}` — city root path
+- `{{ .RigRoot }}` — rig root path
+- `{{ .WorkQuery }}` — work discovery command
+- `{{ .Env.<key> }}` — custom env vars from agent config
+- `{{ cmd }}` — "gc"
+- `{{ basename .AgentName }}` — agent base name
+- `{{ session .AgentName }}` — tmux session name
+
+**Exit criteria:** Every agent in pack.toml has a prompt template."""
+
+[[steps]]
+id = "write-formulas"
+needs = ["write-prompts"]
+title = "Write formula files for pack workflows"
+description = """
+Create `.formula.toml` files for each workflow this pack needs.
+
+**File pattern:** `{{pack_dir}}/packs/{{pack_name}}/formulas/<formula-name>.formula.toml`
+
+**Formula structure:**
+```toml
+description = "Multi-line description of what this formula does."
+formula = "<formula-name>"
+version = 1
+
+[vars]
+[vars.<name>]
+description = "<what this variable controls>"
+required = true|false
+default = "<value>"
+
+[[steps]]
+id = "<step-id>"
+title = "<human-readable title>"
+# needs = ["<prior-step-id>"]  # For dependencies
+description = "Multi-line step instructions with embedded bash."
+```
+
+**Formula conventions:**
+- Steps are instructions, not code — the agent reads and follows them
+- Use `{{variable}}` for substitution from vars
+- Steps should be crash-recoverable (re-readable from context)
+- Include explicit exit criteria for each step
+- For patrol/loop formulas: use pour-work-burn pattern (see mol-deacon-patrol)
+- For one-shot formulas: end with a drain step
+
+**For loop formulas (pour-work-burn pattern):**
+```toml
+[[steps]]
+id = "next-iteration"
+needs = ["<last-work-step>"]
+title = "Pour next iteration and burn"
+description = "Pour next wisp, copy forward state, burn current."
+```
+
+**Exit criteria:** All formulas referenced in prompts exist and are valid TOML."""
+
+[[steps]]
+id = "write-tests"
+needs = ["write-formulas"]
+title = "Write tests for pack structure and formulas"
+description = """
+Verify the pack is well-formed.
+
+**1. Structural validation:**
+```bash
+# Verify pack.toml parses
+cat {{pack_dir}}/packs/{{pack_name}}/pack.toml
+
+# Verify all referenced prompt templates exist
+# (check each prompt_template path in pack.toml)
+
+# Verify all formula files are valid TOML
+for f in {{pack_dir}}/packs/{{pack_name}}/formulas/*.formula.toml; do
+  echo "Checking $f..."
+  cat "$f" | head -3
+done
+```
+
+**2. Cross-reference check:**
+- Every agent in pack.toml has a matching prompt template
+- Every formula referenced in prompts exists in formulas/
+- Shared template fragments referenced via `{{ template }}` exist in prompts/shared/
+
+**3. Convention check:**
+- No hardcoded role names in formula descriptions (ZFC)
+- Formula vars match what prompts/agents expect
+- Agents with scope="rig" use `{{.Rig}}` in work_dir
+- Pool agents have min/max_active_sessions set
+
+**Exit criteria:** All files parse, all references resolve, conventions followed."""
+
+[[steps]]
+id = "self-review"
+needs = ["write-tests"]
+title = "Review all pack files for quality"
+description = """
+Final review pass before committing.
+
+**1. Read everything:**
+```bash
+find {{pack_dir}} -type f | sort
+# Read each file, checking for:
+# - Consistency between pack.toml agent names and prompt filenames
+# - Formula step descriptions are clear and actionable
+# - Prompt templates use correct template variable syntax
+# - No placeholder text left behind
+# - No gastown-specific references (unless this pack includes gastown)
+```
+
+**2. Check composition:**
+- Can this pack be included standalone? (no implicit gastown dependency)
+- Are shared fragments self-contained?
+- Would a city.toml with just this pack make sense?
+
+**3. Check domain accuracy:**
+- Do the formulas actually solve the problem described in the bead?
+- Are the agent roles well-separated?
+- Is the work routing clear (who dispatches to whom)?
+
+Fix any issues found.
+
+**Exit criteria:** Pack is complete, consistent, and ready to commit."""
