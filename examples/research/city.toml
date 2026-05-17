@@ -1,0 +1,38 @@
+# Research City — gastown + wiki + navigator composition example.
+#
+# Demonstrates composing three packs:
+#   gastown    — coding pipeline (mayor, polecat, refinery, witness, deacon)
+#   wiki       — LLM knowledge base (wiki agent)
+#   navigator  — investigation orchestration (navigator pool, PairCoder pattern)
+#
+# The mayor learns about navigators via fragment injection. All agents
+# learn wiki protocol via global fragments.
+#
+# To use:
+#   gc init ~/my-research-city --from examples/research/
+#   gc rig add <path-to-your-project>
+#   gc start
+
+[workspace]
+name = "research"
+provider = "claude"
+includes = ["packs/gastown", "packs/wiki", "packs/navigator"]
+global_fragments = ["command-glossary", "operational-awareness", "wiki-protocol"]
+
+[daemon]
+patrol_interval = "30s"
+max_restarts = 5
+restart_window = "1h"
+shutdown_timeout = "5s"
+
+# ── Mayor: teach about navigator routing ─────────────────────────────
+[[patches.agent]]
+dir = ""
+name = "mayor"
+inject_fragments_append = ["navigator-dispatch"]
+
+# Register a rig to activate per-rig agents (witness, refinery, polecat, navigator):
+# [[rigs]]
+# name = "myproject"
+# path = "/path/to/your/project"
+# includes = ["packs/gastown", "packs/navigator"]
