@@ -1,0 +1,35 @@
+# Wiki — LLM-maintained knowledge base pack.
+#
+# Adds a persistent, structured wiki agent that accumulates project knowledge
+# via two channels: mail (push from agents) and event-bus spying (pull on
+# bead completions). Based on Karpathy's LLM Wiki pattern.
+#
+# Generic — not project-specific. Configure via Env overrides in city.toml:
+#   WIKI_ROOT  — filesystem root for wiki pages (default: .gc/wiki)
+#
+# Composable with any other pack. No agent name collisions with gastown
+# or maintenance packs.
+
+[pack]
+name = "wiki"
+schema = 1
+
+# ── WIKI — Knowledge base maintainer. Singleton. ─────────────────────
+[[agent]]
+name = "wiki"
+scope = "city"
+wake_mode = "fresh"
+work_dir = ".gc/agents/wiki"
+prompt_template = "prompts/wiki.md.tmpl"
+nudge = "Check mail for ingest requests and recent bead completions."
+overlay_dir = "overlays/wiki"
+idle_timeout = "2h"
+max_active_sessions = 1
+
+[agent.env]
+WIKI_ROOT = ".gc/wiki"
+
+[[named_session]]
+template = "wiki"
+scope = "city"
+mode = "always"
